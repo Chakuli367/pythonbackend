@@ -364,9 +364,7 @@ def autonomous_agent(user_input=None, api_key=None, user_id=None):
 
     # ----------------- PHASE: DIAGNOSTIC (conversational) -----------------
     if phase == "diagnostic":
-        # Build a conversational prompt using the conversation history
         history = agent_state.get("conversation_history", [])
-
         prompt = f"""
 You are Alex — a warm, empathetic social skills coach and conversation partner.
 Rules:
@@ -379,12 +377,9 @@ Rules:
 Conversation so far:
 {json.dumps(history, indent=2)}
 """
-
         system_msg = "You are Alex, a warm conversational coach. Be natural, personal, and concise."
-
         next_message = ai_query(prompt, api_key, system_msg, max_tokens=160)
 
-        # Save assistant reply in conversation_history
         agent_state["conversation_history"].append({"role": "assistant", "content": next_message, "ts": datetime.now().isoformat()})
         agent_state["last_question"] = next_message
 
@@ -395,12 +390,89 @@ Conversation so far:
             "progress": agent_state.get("question_count", 0)
         }
 
-        # Heuristic: after 5 conversational turns move forward to analysis
+        # Transition to social_skills_analysis after 5 turns
         if agent_state.get("question_count", 0) >= 5:
-            agent_state["current_phase"] = "conversation_analysis"
+            agent_state["current_phase"] = "social_skills_analysis"
+            agent_state["question_count"] = 0  # reset for new phase
 
         return response_payload
 
+    # ----------------- SOCIAL SKILLS CONVERSATION -----------------
+    if phase == "social_skills_analysis":
+        conv = agent_state.get("conversation_history", [])
+
+        # Increment question count for this phase
+        if user_input:
+            agent_state["question_count"] = agent_state.get("question_count", 0) + 1
+
+        prompt = f"""
+You are Alex, a warm conversational social skills coach.
+Your goal: discover exactly which social skills the user struggles with (e.g., setting boundaries, understanding social cues, initiating conversations, listening, assertiveness).
+Rules:
+- Ask ONE short, natural question at a time.
+- Reference user's previous messages.
+- React empathetically; do NOT give a study plan yet.
+
+Conversation so far:
+{json.dumps(conv, indent=2)}
+"""
+        system_msg = "Human-like social coach, asks personalized questions."
+        next_message = ai_query(prompt, api_key, system_msg, max_tokens=160)
+
+        agent_state["conversation_history"].append({"role": "assistant", "content": next_message, "ts": datetime.now().isoformat()})
+
+        # After 3 turns, move to permission phase
+        if agent_state["question_count"] >= 3:
+            agent_state["current_phase"] = "permission_check_study_guide"
+
+        return {"type": "message", "content": next_message, "phase": phase, "progress": agent_state.get("question_count", 0)}
+
+    # ----------------- PERMISSION TO CREATE STUDY GUIDE -----------------
+    if phase == "permission_check_study_guide":
+        if not user_input:
+            ask = "I now have a good understanding of your social skill challenges. Shall I create a 5-day study guide of the exact topics you could work on?"
+            agent_state["conversation_history"].append({"role": "assistant", "content": ask, "ts": datetime.now().isoformat()})
+            return {"type": "permission_request", "content": ask, "phase": phase}
+
+        lowered = user_input.strip().lower()
+        conv = agent_state.get("conversation_history", [])
+
+        if any(tok in lowered for tok in ["yes", "y", "sure", "save", "ok", "go ahead"]):
+            prompt = f"""
+You are a social skills coach.
+Based on the conversation below, identify the top 5 social skills topics the user struggles with.
+Return ONLY valid JSON array with 5 objects: each object has 'day' (1–5) and 'topic' (literal skill, e.g., setting boundaries, understanding social cues, initiating conversation, assertiveness).
+Conversation:
+{json.dumps(conv, indent=2)}
+"""
+            system_msg = "Return only JSON array of 5-day topics."
+            study_guide_json = ai_query(prompt, api_key, system_msg, max_tokens=800)
+            agent_state["memory"]["social_study_guide_raw"] = study_guide_json
+
+            try:
+                guide_ref = db.collection("users").document(user_id).collection("social_study_guides")
+                new_doc = guide_ref.document()
+                new_doc.set({
+                    "created_at": datetime.utcnow().isoformat(),
+                    "conversation_history": conv,
+                    "study_guide": study_guide_json
+                })
+                agent_state["memory"]["last_saved_study_guide_id"] = new_doc.id
+                agent_state["current_phase"] = "conversation_analysis"
+                return {"type": "saved", "content": f"Social study guide saved (id: {new_doc.id}).", "phase": phase, "doc_id": new_doc.id}
+            except Exception as e:
+                return {"type": "error", "content": f"Failed to save study guide: {str(e)}", "phase": phase}
+
+        if any(tok in lowered for tok in ["no", "not now", "don't save", "dont save"]):
+            agent_state["current_phase"] = "conversation_analysis"
+            return {"type": "permission_denied", "content": "Okay, I won't create the study guide.", "phase": phase}
+
+        if any(tok in lowered for tok in ["edit", "change", "modify"]):
+            agent_state["current_phase"] = "social_skills_analysis"
+            agent_state["conversation_history"].append({"role": "user", "content": user_input, "ts": datetime.now().isoformat()})
+            return {"type": "modify_request", "content": "Noted. We'll adjust the study guide after further conversation.", "phase": phase}
+
+    
     # ----------------- PHASE: CONVERSATION ANALYSIS -----------------
     if phase == "conversation_analysis":
         # Prepare analysis prompt using collected user_data / conversation_history
