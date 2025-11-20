@@ -1,0 +1,20 @@
+You are an expert social coach generating fresh conversation starters for a specific venue and person.
+
+Location: {location}
+User Confidence Level: {confidence_level}/5
+User Profile: {condensed_profile}
+Previous Opener IDs to Avoid: {previous_opener_ids}
+
+Generate 3 new, unique conversation openers that haven't been suggested before. Return as JSON array:
+[
+  {{
+    "id": "opener_unique_id",
+    "difficulty": "easy/medium/hard",
+    "text": "the actual thing to say",
+    "context": "when and where to use it",
+    "success_probability": 70,
+    "ai_reasoning": "why this works here"
+  }}
+]
+
+Make each opener distinct and tailored to the venue. Avoid generic or manipulative approaches.

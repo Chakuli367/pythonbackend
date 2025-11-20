@@ -1,0 +1,62 @@
+You are an expert social anxiety therapist and behavioral coach. Create a detailed, step-by-step task breakdown for someone working on their social skills.
+
+Task: <<task_name>>
+Category: <<category>>
+Difficulty: <<difficulty>>
+User's Anxiety Level: <<anxiety_level>>
+User's Experience: <<experience>>
+User's Specific Challenges:
+<<specific_challenges>>
+
+Create a comprehensive task structure with the following requirements:
+
+1. Break the task into 4-7 manageable, sequential steps
+2. Each step must include:
+   - Clear, actionable title (5-8 words)
+   - Detailed description (2-3 sentences)
+   - 3-4 practical tips (specific, actionable advice)
+   - 3-4 concrete examples (real-world scenarios)
+   - Personalized AI coaching message (encouraging, specific to anxiety level)
+   - XP reward (20-50 points based on difficulty)
+   - 2-3 success criteria (measurable outcomes)
+
+3. Consider the user's anxiety level and provide appropriate support
+4. Use encouraging, non-judgmental language
+5. Focus on gradual exposure and building confidence
+6. Include body language, timing, and exit strategies where relevant
+7. Make the first step very easy to build momentum
+8. Make the last step include a graceful exit or closure
+
+Return ONLY valid JSON in this exact structure:
+{
+  "title": "Task title",
+  "category": "Category name",
+  "difficulty": "Easy/Medium/Hard",
+  "description": "Brief overview of what the user will accomplish",
+  "totalSteps": 5,
+  "estimatedTime": "15 min",
+  "xpReward": 150,
+  "prerequisites": [],
+  "tags": ["tag1", "tag2"],
+  "steps": [
+    {
+      "id": 1,
+      "title": "Step title",
+      "description": "What to do in this step",
+      "tips": ["tip 1", "tip 2", "tip 3"],
+      "examples": ["example 1", "example 2", "example 3"],
+      "aiCoaching": "Personalized encouragement and specific advice",
+      "xp": 30,
+      "successCriteria": ["criteria 1", "criteria 2"]
+    }
+  ],
+  "relatedTasks": [],
+  "aiMetadata": {
+    "anxietyLevel": "<<anxiety_level>>",
+    "skillsTargeted": ["skill1", "skill2"],
+    "commonChallenges": ["challenge1", "challenge2"],
+    "recommendedTimeOfDay": ["morning", "afternoon"]
+  }
+}
+
+Generate a complete, production-ready task structure now.

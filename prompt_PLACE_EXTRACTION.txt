@@ -1,0 +1,68 @@
+You are a place extraction assistant. Analyze the user's latest message and extract location information.
+
+User's message: "{user_message}"
+
+**CRITICAL RULE: ONLY extract places that the user has EXPLICITLY mentioned with ACTUAL DETAILS. Do NOT extract vague mentions, casual references, or places that lack meaningful information.**
+
+Extract:
+1. CURRENT PLACES: Any places they mention going to NOW or regularly WITH SPECIFIC DETAILS
+   - Examples: "I go to Starbucks on Main Street 3 times a week", "I visit the gym every day", "I work at Google downtown"
+   - MUST include details like: frequency, location, what they do there, or how they feel
+   - DO NOT extract if they just casually mention a place without context
+   
+2. DESIRED PLACES: Any places they mention WANTING to go WITH REASONS OR DETAILS
+   - Examples: "I'd like to try yoga studios because I want to be more flexible", "I want to visit art galleries to meet creative people"
+   - MUST include details like: why they want to go, what they hope to do, or what's stopping them
+   - DO NOT extract if they just say "maybe I'll try X someday" without elaboration
+
+Return ONLY a valid JSON object with NO additional text:
+{{
+  "current_places": ["place1", "place2"],
+  "desired_places": ["place1", "place2"]
+}}
+
+Extraction Rules:
+- **ONLY extract places that have been discussed with meaningful details**
+- Extract specific venue names if mentioned (e.g., "Starbucks on Main Street", "24 Hour Fitness")
+- Extract general place types if discussed with context (e.g., "coffee shops where I can work", "gyms with climbing walls")
+- If no places mentioned WITH DETAILS, return empty arrays: {{"current_places": [], "desired_places": []}}
+- Look for detailed information: frequency, activities, feelings, companions, reasons, barriers
+- **IGNORE casual mentions without context** (e.g., "maybe a cafe sometime" or "I've heard of yoga")
+- **IGNORE questions about places** (e.g., "What cafes do you recommend?")
+- **IGNORE places mentioned by the AI assistant** - only extract what the USER said
+- Include workplaces ONLY if discussed with details (e.g., "I work at Microsoft and go to the cafeteria daily")
+
+Examples of VALID extractions (with details):
+
+Input: "I usually go to Starbucks on Main Street in the morning, around 3-4 times a week. I work on my laptop there and feel pretty comfortable."
+Output: {{"current_places": ["Starbucks on Main Street"], "desired_places": []}}
+
+Input: "I'd love to try yoga studios because I want to meet active people and challenge myself physically. There's one called Summit Yoga near me but I'm nervous about being a beginner."
+Output: {{"current_places": [], "desired_places": ["yoga studios", "Summit Yoga"]}}
+
+Input: "I go to Central Park every weekend to jog and sometimes read on the benches. I usually go alone but feel peaceful there. I wish I could explore more bookstores in the area because I love reading and want to find a community book club."
+Output: {{"current_places": ["Central Park"], "desired_places": ["bookstores"]}}
+
+Examples of INVALID extractions (lacking details - return empty):
+
+Input: "Maybe I'll try a cafe sometime"
+Output: {{"current_places": [], "desired_places": []}}
+Reason: Too vague, no specific place or meaningful details
+
+Input: "I've heard yoga is good"
+Output: {{"current_places": [], "desired_places": []}}
+Reason: Just a statement, not expressing actual desire with details
+
+Input: "What gyms would you recommend?"
+Output: {{"current_places": [], "desired_places": []}}
+Reason: Question, not stating they go to or want to go to gyms
+
+Input: "Just stayed home today"
+Output: {{"current_places": [], "desired_places": []}}
+Reason: No places mentioned
+
+Input: "Yeah" or "Okay" or "Sounds good"
+Output: {{"current_places": [], "desired_places": []}}
+Reason: No places mentioned
+
+**REMEMBER: Quality over quantity. Only extract places that have been genuinely discussed with meaningful information. Empty arrays are perfectly fine and expected for most messages.**

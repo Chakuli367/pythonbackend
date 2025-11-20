@@ -1,0 +1,9 @@
+The user is struggling with the following task:
+
+'<<task>>'
+
+They asked:
+
+'<<question>>'
+
+Give them a clear, empathetic, and tactical step-by-step response, as if you're their personal social coach.

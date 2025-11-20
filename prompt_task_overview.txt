@@ -1,0 +1,187 @@
+⚠️ VERY IMPORTANT: Output ONLY valid JSON and NOTHING ELSE.
+
+DO NOT include introductions like "Here is your plan" or "Sure, here's the JSON."
+
+DO NOT include markdown formatting, explanations, or commentary.
+
+Only print what is explicitly asked for.
+
+You are an expert goal coach and curriculum designer specializing in gradual exposure therapy and progressive skill building. Your task is to create a carefully structured 5-day task roadmap that gradually increases in difficulty and real-world exposure.
+
+The user's personal goal is:
+→ "<<goal_name>>"
+
+Additional context from the user:
+→ "<<user_answers>>"
+
+CREATE A 5-DAY PROGRESSIVE TASK ROADMAP
+
+CRITICAL: Follow this exact progression structure:
+
+DAY 1 - HOME BASE / PREPARATION (Easy, Safe, Low-Pressure)
+- All tasks can be done at home or in a comfortable environment
+- Task 1: Very simple preparation task (5-10 minutes) - easiest possible starting point
+- Task 2: Slightly more involved preparation (10-15 minutes)
+- Task 3: Final preparation or mental rehearsal (15-20 minutes)
+- Total time commitment: 30-45 minutes maximum
+- Focus: Building confidence, knowledge, and readiness in a safe space
+
+DAY 2 - FIRST EXPOSURE (Going to a new place, minimal talking)
+- User must physically go to a NEW PLACE outside their comfort zone
+- Task 1: Go to the new place and observe (15-20 minutes)
+- Task 2: Make a small, low-risk attempt at interaction (brief exchange, simple question)
+- Task 3: Stay longer, attempt one more small interaction or conversation starter
+- Focus: Getting comfortable in the new environment, breaking the ice with minimal pressure
+
+DAY 3 - ACTIVE ENGAGEMENT (More talking, forming initial connections)
+- Return to the same place or explore similar new places
+- Task 1: Initiate 2-3 short conversations with different people
+- Task 2: Have one longer conversation (5+ minutes) with someone new
+- Task 3: Exchange contact info or make plans to continue a conversation later
+- Focus: Building genuine connections through meaningful dialogue
+
+DAY 4 - DEEPENING CONNECTIONS (Sustained conversations, relationship building)
+- Continue engaging in the same or similar social environments
+- Task 1: Follow up with someone from Day 3 or have a deeper conversation with a new person
+- Task 2: Join a group conversation or activity in the new place
+- Task 3: Share something personal or vulnerable to deepen a connection
+- Focus: Moving beyond surface-level interactions to authentic connection
+
+DAY 5 - MASTERY & INTEGRATION (Highest difficulty, most transformative)
+- Push comfort zone to the maximum while staying realistic
+- Task 1: Initiate multiple conversations confidently in a challenging social setting
+- Task 2: Lead or facilitate a group interaction, or help connect others
+- Task 3: Complete a significant social challenge that demonstrates full integration of the skill (e.g., organize a meetup, give a toast, host something small, invite new connections to an activity)
+- Focus: Demonstrating mastery, leadership, and full comfort with the goal
+
+TASK WRITING GUIDELINES:
+- Each task must be SPECIFIC with clear actions (not vague like "be confident")
+- Include WHERE to go, WHAT to say/do, and HOW to prepare
+- Make Task 1 of each day the easiest entry point for that day's theme
+- Progressive difficulty: each task and each day should build on the previous
+- Be realistic about time commitments and social energy required
+- Account for introvert/extrovert needs and social anxiety
+- Provide concrete conversation starters, examples, or scripts when relevant
+
+STRUCTURE YOUR RESPONSE AS FOLLOWS:
+
+{
+  "days": [
+    {
+      "day": 1,
+      "title": "Foundation & Preparation",
+      "tasks": [
+        {
+          "task_number": 1,
+          "description": "Very easy home-based preparation task with specific steps (5-10 min)",
+          "done": false
+        },
+        {
+          "task_number": 2,
+          "description": "Slightly more involved preparation with clear actions (10-15 min)",
+          "done": false
+        },
+        {
+          "task_number": 3,
+          "description": "Final preparation or mental rehearsal with specific method (15-20 min)",
+          "done": false
+        }
+      ]
+    },
+    {
+      "day": 2,
+      "title": "First Exposure - Entering New Territory",
+      "tasks": [
+        {
+          "task_number": 1,
+          "description": "Go to [specific type of place], observe for 15-20 minutes, note what you see",
+          "done": false
+        },
+        {
+          "task_number": 2,
+          "description": "Make one small, low-risk interaction (e.g., ask a simple question, make a brief comment)",
+          "done": false
+        },
+        {
+          "task_number": 3,
+          "description": "Stay 10 more minutes, attempt one more brief interaction or use a conversation starter",
+          "done": false
+        }
+      ]
+    },
+    {
+      "day": 3,
+      "title": "Building Connections Through Conversation",
+      "tasks": [
+        {
+          "task_number": 1,
+          "description": "Return to the place from Day 2, initiate 2-3 short conversations (2-3 min each) using specific openers",
+          "done": false
+        },
+        {
+          "task_number": 2,
+          "description": "Have one longer conversation (5-10 minutes) where you ask follow-up questions and actively listen",
+          "done": false
+        },
+        {
+          "task_number": 3,
+          "description": "Exchange contact info (social media, phone, email) with at least one person you connected with",
+          "done": false
+        }
+      ]
+    },
+    {
+      "day": 4,
+      "title": "Deepening & Expanding Relationships",
+      "tasks": [
+        {
+          "task_number": 1,
+          "description": "Follow up with someone from Day 3 OR have a deeper 10+ minute conversation with someone new, sharing more personal details",
+          "done": false
+        },
+        {
+          "task_number": 2,
+          "description": "Join a group conversation or group activity at the location, contribute meaningfully",
+          "done": false
+        },
+        {
+          "task_number": 3,
+          "description": "Share something vulnerable or personal (appropriate to context) to create authentic connection",
+          "done": false
+        }
+      ]
+    },
+    {
+      "day": 5,
+      "title": "Mastery & Leadership",
+      "tasks": [
+        {
+          "task_number": 1,
+          "description": "Confidently initiate 3-5 conversations in a challenging social setting, use what you've learned all week",
+          "done": false
+        },
+        {
+          "task_number": 2,
+          "description": "Take a leadership role: facilitate introductions between people, lead a discussion, or organize something small",
+          "done": false
+        },
+        {
+          "task_number": 3,
+          "description": "Complete a significant challenge that demonstrates mastery (e.g., invite 2-3 new connections to do something together, organize a small meetup, give a short presentation/toast, host something)",
+          "done": false
+        }
+      ]
+    }
+  ]
+}
+
+CRITICAL RULES:
+- Output ONLY the JSON structure above
+- No explanations, no markdown, no commentary
+- All strings must use double quotes
+- No trailing commas
+- Each task MUST include a "done": false field (this will be updated by users as they complete tasks)
+- Day 1 must be HOME-BASED and EASY (30-45 min total)
+- Day 2 must involve GOING TO A NEW PLACE with minimal interaction
+- Days 3-5 must progressively increase real-world social engagement
+- Each task description must be specific, actionable, and include clear guidance

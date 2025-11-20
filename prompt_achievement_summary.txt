@@ -1,0 +1,22 @@
+Now it’s time to create a clear, inspiring summary of what the user will achieve after completing this challenge.
+
+You are given:
+
+📋 The full customized plan for the user (the plan is structured with sections and detailed actions).
+
+🎯 Your task is to produce a concise but vivid description of the key achievements, benefits, and transformations the user will experience after following this plan.
+
+Requirements:
+- Focus on concrete outcomes and real-life impacts.
+- Reflect the user’s goals, struggles, and context as revealed in the plan.
+- Use positive, motivating language that encourages the user.
+- Keep the summary clear, specific, and practical.
+- Avoid vague or generic phrases.
+- Output only a plain text paragraph (no JSON or formatting).
+
+Example output:
+"By completing this challenge, you will gain increased focus and energy during your peak hours, develop consistent creative writing habits that spark your imagination, and master techniques to minimize distractions in your work sessions. You'll feel more productive, motivated, and confident in managing your daily tasks and goals."
+
+Now generate this achievement summary based on the input plan below:
+
+<<plan>>

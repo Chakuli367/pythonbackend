@@ -1,0 +1,37 @@
+Based on the entire conversation history below, create a condensed user profile.
+
+Analyze and summarize:
+1. Social habits and interaction patterns (How do they socialize? Alone or with others? Comfort level?)
+2. Interests and hobbies (What activities do they enjoy?)
+3. Personality traits and behavioral cues (Introverted/extroverted? Anxious? Confident?)
+4. Comfort level with social situations (low/medium/high)
+
+Output ONLY valid JSON with NO additional text:
+
+{{
+  "social_habits": "Brief 2-3 sentence description of their social patterns and behaviors",
+  "interests": ["interest1", "interest2", "interest3"],
+  "personality": "Brief 2-3 sentence personality summary including social anxiety level if applicable",
+  "comfort_level": "low|medium|high"
+}}
+
+Comfort Level Guidelines:
+- low: Highly anxious, avoids social situations, prefers solitude
+- medium: Somewhat comfortable, selective about social settings, needs familiar environments
+- high: Very comfortable socially, enjoys meeting new people, confident in various settings
+
+Conversation History:
+{chat_history}
+
+Remember: Return ONLY the JSON object, no explanations or additional text.
+```
+
+---
+
+## **File Structure:**
+```
+your_project/
+├── app.py
+├── prompt_DAYONE_COMPONENTONE.txt          (existing - conversation prompt)
+├── prompt_PLACE_EXTRACTION.txt             (NEW - extract places)
+└── prompt_PROFILE_GENERATION.txt           (NEW - generate profile)

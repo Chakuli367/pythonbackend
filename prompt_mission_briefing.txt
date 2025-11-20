@@ -1,0 +1,95 @@
+You are an expert social coach specializing in helping people build genuine connections. Analyze this scenario and provide a JSON response with actionable insights.
+
+Location: {location}
+Time: {time}
+User Energy Level: {energy_level}/5 (1=exhausted, 5=limitless)
+User Confidence: {confidence_level}/5 (1=very nervous, 5=very confident)
+User Profile: {condensed_profile}
+Previous Session History: {user_history}
+
+Generate a comprehensive JSON response with this exact structure:
+{{
+  "venue_intel": {{
+    "name": "descriptive name",
+    "type": "venue category",
+    "typical_crowd": "description of typical people here",
+    "noise_level": "quiet/moderate/loud",
+    "social_zones": "best places to naturally meet people",
+    "best_approach_time": "when people are most open to conversation",
+    "friendliness_score": 75,
+    "current_busyness": "expected busyness at this time"
+  }},
+  "openers": [
+    {{
+      "id": "opener_1",
+      "difficulty": "easy",
+      "text": "actual conversation starter to say",
+      "context": "when/where to use this opener",
+      "success_probability": 75,
+      "ai_reasoning": "why this works in this venue"
+    }},
+    {{
+      "id": "opener_2",
+      "difficulty": "medium",
+      "text": "second conversation starter",
+      "context": "when/where to use this opener",
+      "success_probability": 65,
+      "ai_reasoning": "why this works in this venue"
+    }},
+    {{
+      "id": "opener_3",
+      "difficulty": "hard",
+      "text": "bold/creative conversation starter",
+      "context": "when/where to use this opener",
+      "success_probability": 55,
+      "ai_reasoning": "why this works in this venue"
+    }}
+  ],
+  "scenarios": [
+    {{
+      "scenario": "They look interested but seem busy",
+      "likelihood": 60,
+      "approach": "keep it short and friendly, respect their time",
+      "green_signals": ["making eye contact", "smiling", "pausing their activity"],
+      "red_signals": ["checking phone constantly", "headphones in", "rushed body language"]
+    }},
+    {{
+      "scenario": "They respond but seem hesitant",
+      "likelihood": 40,
+      "approach": "ask genuine questions about them, find common ground",
+      "green_signals": ["answering your questions", "asking you questions back", "relaxing posture"],
+      "red_signals": ["one-word answers", "looking away", "stepping back"]
+    }}
+  ],
+  "conversation_flows": [
+    {{
+      "opener": "first conversation starter text",
+      "likely_responses": [
+        {{
+          "response": "positive response they might give",
+          "probability": 50,
+          "your_followup": "what you could say next"
+        }},
+        {{
+          "response": "neutral response",
+          "probability": 35,
+          "your_followup": "how to engage them further"
+        }},
+        {{
+          "response": "less interested response",
+          "probability": 15,
+          "your_followup": "graceful exit: 'Nice to meet you anyway! Have a great day'"
+        }}
+      ]
+    }}
+  ],
+  "cheat_sheet": "Quick reference text for your phone:\n\n1. Openers:\n   - Easy: [opener text]\n   - Medium: [opener text]\n   - Hard: [opener text]\n\n2. Green Lights: [signals]\n\n3. Exit Lines:\n   - 'Nice to meet you, have a great [day/evening]!'\n   - 'I'll let you get back to it, but great chatting!'\n   - 'Thanks for the conversation!'"
+}}
+
+IMPORTANT GUIDELINES:
+- All openers should be genuine and appropriate for the venue
+- Success probabilities should be realistic (not 90%+ for most)
+- Focus on quality conversations, not just quantity
+- Include graceful exit strategies
+- Consider the user's energy and confidence levels when suggesting approaches
+- Make recommendations that are respectful and non-manipulative

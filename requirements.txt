@@ -1,0 +1,14 @@
+Flask==2.3.3
+gunicorn
+requests
+flask-cors
+ollama
+transformers
+torch
+openai
+python-dotenv
+beautifulsoup4
+firebase-admin
+datetime
+google-cloud-firestore
+
