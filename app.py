@@ -329,385 +329,314 @@ agent_state = {
     "question_count": 0
 }
 
-# ========== AI QUERY HELPER ==========
-def ai_query(prompt, api_key, system_msg="You are a helpful assistant.", max_tokens=500):
-    """Queries the Groq API, using the API key provided in the function call."""
-    
-    HEADERS = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": max_tokens,
-        "temperature": 0.7
-    }
-    try:
-        response = requests.post(API_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return f"Error: {e}"
+# =================== FULL UPDATED autonomous_agent + endpoint ===================
 
-# ========== FIREBASE UPDATE HELPER ==========
-def update_firebase_task_plan(user_id, ai_generated_plan):
-    """
-    Updates the Firebase document with the new AI-generated task plan.
-    Parses the AI plan and structures it according to Firebase schema.
-    """
-    try:
-        # Reference to the document
-        doc_ref = db.collection('users').document(user_id).collection('datedCourses').document('social_skills')
-        
-        # Parse the AI-generated plan into structured format
-        structured_days = parse_ai_plan_to_firebase_format(ai_generated_plan)
-        
-        # Get current date for date assignments
-        current_date = datetime.now()
-        
-        # Structure the days array
-        days_array = []
-        for i, day_data in enumerate(structured_days, 1):
-            day_date = (current_date + timedelta(days=i-1)).strftime("%Y-%m-%d")
-            day_obj = {
-                "date": day_date,
-                "day": i,
-                "title": day_data["title"],
-                "tasks": day_data["tasks"]
-            }
-            days_array.append(day_obj)
-        
-        # Update the document
-        doc_ref.update({
-            "task_overview.days": days_array,
-            "generated_at": firestore.SERVER_TIMESTAMP,
-            "status": "active"
-        })
-        
-        return {"success": True, "message": "Task plan updated successfully in Firebase"}
-    
-    except Exception as e:
-        return {"success": False, "message": f"Firebase update error: {str(e)}"}
+# (Assumes the rest of your file remains unchanged: imports, ai_query, parse_ai_plan_to_firebase_format, update_firebase_task_plan, agent_state, etc.)
 
-# ========== AI PLAN PARSER ==========
-def parse_ai_plan_to_firebase_format(ai_plan):
-    """
-    Parses the AI-generated text plan into Firebase-compatible structure.
-    Handles both JSON and text formats.
-    """
-    try:
-        # Try to extract JSON if it's wrapped in code blocks
-        if "```json" in ai_plan:
-            json_start = ai_plan.find("```json") + 7
-            json_end = ai_plan.find("```", json_start)
-            ai_plan = ai_plan[json_start:json_end].strip()
-        elif "```" in ai_plan:
-            json_start = ai_plan.find("```") + 3
-            json_end = ai_plan.find("```", json_start)
-            ai_plan = ai_plan[json_start:json_end].strip()
-        
-        # Try to parse as JSON
-        if ai_plan.strip().startswith('[') or ai_plan.strip().startswith('{'):
-            parsed = json.loads(ai_plan)
-            # If it's a dict with a days key, extract that
-            if isinstance(parsed, dict) and "days" in parsed:
-                return parsed["days"]
-            return parsed if isinstance(parsed, list) else [parsed]
-        
-        # Fallback: text parsing
-        days = []
-        current_day = None
-        
-        lines = ai_plan.split('\n')
-        for line in lines:
-            line = line.strip()
-            if line.startswith('Day ') or line.startswith('**Day '):
-                if current_day:
-                    days.append(current_day)
-                current_day = {"title": "", "tasks": []}
-                # Extract title from same line if present
-                if ':' in line:
-                    current_day["title"] = line.split(':', 1)[1].strip()
-            elif current_day is not None and line and not line.startswith('#'):
-                # Parse tasks (look for numbered items or bullets)
-                if line[0].isdigit() or line.startswith('-') or line.startswith('•'):
-                    task_text = line.lstrip('0123456789.-•) ').strip()
-                    if task_text:
-                        task = {
-                            "task_number": len(current_day["tasks"]) + 1,
-                            "description": task_text
-                        }
-                        current_day["tasks"].append(task)
-        
-        if current_day:
-            days.append(current_day)
-        
-        return days if days else []
-    
-    except Exception as e:
-        print(f"Parse error: {e}")
-        return []
-
-# ========== AUTO-PHASE AGENT LOGIC ==========
 def autonomous_agent(user_input=None, api_key=None, user_id=None):
-    """Main agent logic with Firebase integration and enhanced prompts."""
-    
+    """
+    Conversational autonomous agent that:
+    - engages conversationally in diagnostic phase
+    - analyzes and sets goals
+    - generates an action plan
+    - asks permission before saving
+    - creates a new Firestore doc at users/{userId}/aibrain/{autoGeneratedId}
+    """
+    # Basic validation
     if not api_key:
         return {"type": "error", "content": "API Key not provided in the request.", "phase": "error"}
-    
     if not user_id:
         return {"type": "error", "content": "User ID not provided in the request.", "phase": "error"}
-    
-    # Store user_id in agent state
+
+    # Ensure user_id is stored
     agent_state["user_id"] = user_id
 
-    phase = agent_state["current_phase"]
+    # Append user input to conversation history if provided
+    if user_input:
+        # Save the user's raw message in conversation_history
+        agent_state["conversation_history"].append({"role": "user", "content": user_input, "ts": datetime.now().isoformat()})
+        # If diagnostic stage is ongoing, increment question_count (this represents turns)
+        if agent_state["current_phase"] == "diagnostic":
+            agent_state["question_count"] = agent_state.get("question_count", 0) + 1
+
+    phase = agent_state.get("current_phase", "diagnostic")
     response_payload = {}
 
-    # Store user input if provided
-    if user_input:
-        agent_state["question_count"] += 1
-        last_question = agent_state.get("last_question", "general question")
-        agent_state["user_data"][f"response_{agent_state['question_count']}"] = {
-            "question": last_question,
-            "answer": user_input,
-            "timestamp": datetime.now().isoformat()
-        }
-        agent_state["conversation_history"].append({"role": "user", "content": user_input})
-
-    # --- PHASE LOGIC ---
-    
+    # ----------------- PHASE: DIAGNOSTIC (conversational) -----------------
     if phase == "diagnostic":
-        # Enhanced diagnostic prompts with progressive depth
-        question_prompts = [
-            """You are a warm, empathetic social skills coach named Alex. This is your first interaction with the user.
+        # Build a conversational prompt using the conversation history
+        history = agent_state.get("conversation_history", [])
 
-Context: The user wants to improve their social skills. Start by understanding their current situation.
+        prompt = f"""
+You are Alex — a warm, empathetic social skills coach and conversation partner.
+Rules:
+- Respond naturally and reference the user's previous messages when helpful.
+- React (empathy, curiosity, short reflection) then ask ONE natural follow-up question.
+- Keep responses short (under 80 words).
+- Do NOT sound like a checklist or form.
+- Ask only one thing; be conversational and human.
 
-Ask ONE specific question to understand:
-- Their biggest challenge in social situations (first question)
-- A recent social situation they found difficult (second question)  
-- What they wish they could do differently socially (third question)
+Conversation so far:
+{json.dumps(history, indent=2)}
+"""
 
-Requirements:
-- Ask only the question appropriate for this stage (question {count} of 3)
-- Be conversational and encouraging
-- Show genuine interest
-- Keep it under 40 words
-- End with the question, no extra explanations""",
-            
-            """Based on the user's previous response: "{prev_response}"
+        system_msg = "You are Alex, a warm conversational coach. Be natural, personal, and concise."
 
-You're building deeper understanding. Ask ONE follow-up question that:
-- Digs into the specifics of their social challenge
-- Helps identify patterns in their social interactions
-- Explores what triggers their social discomfort
+        next_message = ai_query(prompt, api_key, system_msg, max_tokens=160)
 
-Keep it supportive and under 40 words.""",
-            
-            """Previous responses show: {summary}
+        # Save assistant reply in conversation_history
+        agent_state["conversation_history"].append({"role": "assistant", "content": next_message, "ts": datetime.now().isoformat()})
+        agent_state["last_question"] = next_message
 
-Ask ONE final diagnostic question that:
-- Identifies what success would look like for them
-- Uncovers their motivation for improvement
-- Reveals their preferred learning style (practice vs theory, solo vs group)
-
-Be encouraging and concise (under 40 words)."""
-        ]
-        
-        # Select prompt based on question count
-        q_num = min(agent_state["question_count"], 2)
-        base_prompt = question_prompts[q_num]
-        
-        # Build context
-        prev_response = ""
-        summary = ""
-        if agent_state["user_data"]:
-            last_key = list(agent_state["user_data"].keys())[-1]
-            prev_response = agent_state["user_data"][last_key]["answer"]
-            summary = " | ".join([f"Q: {v['question'][:50]} A: {v['answer'][:50]}" 
-                                 for v in agent_state["user_data"].values()])
-        
-        prompt = base_prompt.format(
-            count=agent_state["question_count"] + 1,
-            prev_response=prev_response,
-            summary=summary
-        )
-        
-        system_msg = "You are Alex, an empathetic social skills coach. Be warm, concise, and ask insightful questions."
-        next_question = ai_query(prompt, api_key, system_msg, max_tokens=100)
-        
-        agent_state["last_question"] = next_question
         response_payload = {
-            "type": "question",
-            "content": next_question,
+            "type": "message",
+            "content": next_message,
             "phase": "diagnostic",
-            "progress": f"{agent_state['question_count']}/3"
+            "progress": agent_state.get("question_count", 0)
         }
 
-        # Move to next phase after 3 questions
-        if agent_state["question_count"] >= 3:
+        # Heuristic: after 5 conversational turns move forward to analysis
+        if agent_state.get("question_count", 0) >= 5:
             agent_state["current_phase"] = "conversation_analysis"
 
-    elif phase == "conversation_analysis":
-        prompt = f"""You are analyzing a user's social skills diagnostic session.
+        return response_payload
 
-User's responses:
-{json.dumps(agent_state['user_data'], indent=2)}
+    # ----------------- PHASE: CONVERSATION ANALYSIS -----------------
+    if phase == "conversation_analysis":
+        # Prepare analysis prompt using collected user_data / conversation_history
+        # Prefer conversation_history for richer context
+        conv = agent_state.get("conversation_history", [])
+        # Summarize key user messages for the model
+        prompt = f"""
+You are a perceptive social skills analyst.
 
-Provide a brief, personalized analysis (3-4 sentences) that:
-1. Identifies ONE core pattern or challenge in their social interactions
-2. Highlights ONE existing strength they can build on
-3. Offers ONE specific, actionable insight they can apply immediately
+Use the conversation below (user messages + assistant replies) to:
+1) Identify ONE core recurring pattern or challenge the user faces.
+2) Highlight ONE strength the user already shows.
+3) Give ONE concise, actionable insight the user can try immediately.
 
-Be specific, reference their actual responses, and be encouraging. Avoid generic advice."""
+Provide a short (3-4 sentence) personalized analysis and keep it specific to the user's content.
 
-        system_msg = "You are a perceptive social skills analyst. Be specific, personal, and constructive."
-        insight = ai_query(prompt, api_key, system_msg, max_tokens=200)
-        
-        response_payload = {
-            "type": "insight",
-            "content": insight,
-            "phase": "conversation_analysis"
-        }
+Conversation:
+{json.dumps(conv, indent=2)}
+"""
+
+        system_msg = "You are specific, constructive, and concise."
+
+        analysis = ai_query(prompt, api_key, system_msg, max_tokens=240)
+
+        # Save analysis to state memory
+        agent_state["memory"]["analysis"] = analysis
         agent_state["current_phase"] = "goal_setting"
 
-    elif phase == "goal_setting":
-        prompt = f"""Based on this diagnostic session:
-
-{json.dumps(agent_state['user_data'], indent=2)}
-
-Create 3 SMART goals for the user to achieve over the next 5 days:
-
-Requirements for each goal:
-- Specific and measurable (user should know when they've achieved it)
-- Directly addresses their stated challenges
-- Builds progressively (Goal 1 → Goal 2 → Goal 3 increases in difficulty)
-- Realistic for a 5-day timeframe
-- Focused on observable behaviors, not feelings
-
-Format:
-**Goal 1**: [Specific, measurable goal]
-**Goal 2**: [Specific, measurable goal]  
-**Goal 3**: [Specific, measurable goal]
-
-Make these personal to their situation, not generic."""
-
-        system_msg = "You are a goal-setting expert. Create specific, measurable, achievable goals."
-        goals = ai_query(prompt, api_key, system_msg, max_tokens=300)
-        
-        agent_state["memory"]["goals"] = goals
         response_payload = {
-            "type": "goals",
-            "content": goals,
-            "phase": "goal_setting"
+            "type": "insight",
+            "content": analysis,
+            "phase": "conversation_analysis"
         }
+
+        return response_payload
+
+    # ----------------- PHASE: GOAL SETTING -----------------
+    if phase == "goal_setting":
+        # Create SMART goals based on conversation and analysis
+        conv = agent_state.get("conversation_history", [])
+        analysis = agent_state["memory"].get("analysis", "")
+
+        prompt = f"""
+Based on the conversation and the analysis summary below, create 3 SMART goals for the user to pursue over the next 5 days.
+Make each goal:
+- Specific, measurable, achievable within 5 days,
+- Progressively harder (Goal 1 easiest → Goal 3 hardest),
+- Focused on observable actions.
+
+Conversation:
+{json.dumps(conv, indent=2)}
+
+Analysis:
+{analysis}
+
+Return goals as plain text, each on its own line prefixed by "Goal 1:", "Goal 2:", "Goal 3:".
+"""
+
+        system_msg = "Create three concise SMART goals, personal to the user's situation."
+
+        goals_text = ai_query(prompt, api_key, system_msg, max_tokens=300)
+
+        agent_state["memory"]["goals"] = goals_text
         agent_state["current_phase"] = "action_planning"
 
-    elif phase == "action_planning":
-        prompt = f"""You are creating a personalized 5-day social skills improvement plan.
-
-USER PROFILE:
-{json.dumps(agent_state['user_data'], indent=2)}
-
-GOALS:
-{agent_state['memory'].get('goals', 'Not set')}
-
-Create a 5-day action plan with progressive difficulty. Each day should build on the previous day.
-
-CRITICAL: Return ONLY valid JSON in this exact format (no additional text):
-
-[
-  {{
-    "title": "Day 1: Foundation Building",
-    "tasks": [
-      {{"task_number": 1, "description": "Specific action with clear outcome"}},
-      {{"task_number": 2, "description": "Specific action with clear outcome"}},
-      {{"task_number": 3, "description": "Specific action with clear outcome"}}
-    ]
-  }},
-  {{
-    "title": "Day 2: [Theme]",
-    "tasks": [
-      {{"task_number": 1, "description": "..."}},
-      {{"task_number": 2, "description": "..."}},
-      {{"task_number": 3, "description": "..."}}
-    ]
-  }},
-  ... (continue for days 3, 4, 5)
-]
-
-Requirements:
-- Day 1: Low-risk, confidence-building activities (observation, preparation)
-- Day 2-3: Moderate challenge with real interactions
-- Day 4-5: Stretch goals that push their boundaries
-- Each task must be: specific, actionable, completable in 15-30 minutes
-- Tasks should directly address their stated challenges
-- Include a mix of: mental exercises, real-world practice, reflection
-- No generic advice - personalize based on their responses
-
-Return ONLY the JSON array, no explanations."""
-
-        system_msg = "You are an expert at creating progressive, personalized action plans. Return only valid JSON."
-        plan = ai_query(prompt, api_key, system_msg, max_tokens=2000)
-        
-        agent_state["memory"]["action_plan"] = plan
-        
-        # ========== UPDATE FIREBASE ==========
-        firebase_result = update_firebase_task_plan(user_id, plan)
-        
-        if firebase_result["success"]:
-            response_payload = {
-                "type": "action_plan",
-                "content": plan,
-                "phase": "action_planning",
-                "firebase_status": "success",
-                "message": "🎉 Your personalized 5-day plan has been created and saved!",
-                "next_steps": "Your plan is now ready. Start with Day 1 tomorrow!"
-            }
-        else:
-            response_payload = {
-                "type": "action_plan",
-                "content": plan,
-                "phase": "action_planning", 
-                "firebase_status": "error",
-                "message": f"Plan created but couldn't save: {firebase_result['message']}"
-            }
-        
-        agent_state["current_phase"] = "complete"
-
-    elif phase == "complete":
         response_payload = {
-            "type": "completion",
-            "phase": "complete",
-            "status": "finished",
-            "message": "✅ All phases complete! Your personalized social skills plan is ready to go.",
-            "summary": {
-                "questions_answered": agent_state["question_count"],
-                "goals_set": 3,
-                "days_planned": 5,
-                "total_tasks": 15
-            },
-            "action_required": False
+            "type": "goals",
+            "content": goals_text,
+            "phase": "goal_setting"
         }
 
-    return response_payload
+        return response_payload
+
+    # ----------------- PHASE: ACTION PLANNING -----------------
+    if phase == "action_planning":
+        conv = agent_state.get("conversation_history", [])
+        goals = agent_state["memory"].get("goals", "")
+
+        # Ask model for a strict JSON array for the 5-day plan (same contract as before)
+        prompt = f"""
+You are creating a personalized 5-day action plan. Use the conversation and the user's goals.
+
+Conversation:
+{json.dumps(conv, indent=2)}
+
+Goals:
+{goals}
+
+Return ONLY valid JSON (no explanation) in this exact format:
+[
+  {{
+    "title": "Day 1: ...",
+    "tasks": [
+      {{"task_number": 1, "description": "..."  }},
+      {{"task_number": 2, "description": "..."  }},
+      {{"task_number": 3, "description": "..."  }}
+    ]
+  }},
+  ... (Day 2..5)
+]
+
+Constraints:
+- Day 1 low-risk, days 2-3 moderate, days 4-5 stretch.
+- Each task completes in 15-30 minutes.
+- Personalize tasks to the user's conversation.
+- Return only JSON array.
+"""
+
+        system_msg = "Return only valid JSON array with 5 day objects."
+
+        plan_json_text = ai_query(prompt, api_key, system_msg, max_tokens=2000)
+        # store raw plan in memory
+        agent_state["memory"]["action_plan_raw"] = plan_json_text
+
+        # At this point, DO NOT save to Firestore yet. Ask user for permission first.
+        agent_state["current_phase"] = "permission_check"
+
+        response_payload = {
+            "type": "action_plan_preview",
+            "content": plan_json_text,
+            "phase": "action_planning",
+            "message": "I created a 5-day plan draft. May I save it to your AI Brain file?"
+        }
+
+        return response_payload
+
+    # ----------------- PHASE: PERMISSION CHECK -----------------
+    if phase == "permission_check":
+        # The most recent user_input should be a permission response or an instruction to modify
+        if not user_input:
+            # Ask explicitly for permission
+            ask = "I have a personalized 5-day plan ready. Do you want me to save it to a new AI Brain file in your account?"
+            # append assistant ask to history
+            agent_state["conversation_history"].append({"role": "assistant", "content": ask, "ts": datetime.now().isoformat()})
+            return {"type": "permission_request", "content": ask, "phase": "permission_check"}
+
+        lowered = user_input.strip().lower()
+
+        # If user grants permission
+        if any(tok in lowered for tok in ["yes", "y", "sure", "please save", "save", "ok", "okay", "go ahead", "do it"]):
+            # Save as new AIBRAIN document under users/{userId}/aibrain/{autoId}
+            try:
+                aibrain_ref = db.collection("users").document(user_id).collection("aibrain")
+                save_payload = {
+                    "created_at": datetime.utcnow().isoformat(),
+                    "conversation_history": agent_state.get("conversation_history", []),
+                    "goals": agent_state["memory"].get("goals", ""),
+                    "action_plan_raw": agent_state["memory"].get("action_plan_raw", ""),
+                    "status": "saved"
+                }
+                # create new auto-ID doc
+                new_doc_ref = aibrain_ref.document()  # auto id
+                new_doc_ref.set(save_payload)
+
+                agent_state["memory"]["last_saved_aibrain_doc"] = new_doc_ref.id
+                agent_state["current_phase"] = "complete"
+                # persist nothing else external; agent_state is in-memory here
+                response_payload = {
+                    "type": "saved",
+                    "content": f"Saved to AI Brain (id: {new_doc_ref.id}).",
+                    "phase": "permission_check",
+                    "aibrain_doc_id": new_doc_ref.id
+                }
+                return response_payload
+
+            except Exception as e:
+                response_payload = {
+                    "type": "error",
+                    "content": f"Failed to save AIBRAIN doc: {str(e)}",
+                    "phase": "permission_check"
+                }
+                return response_payload
+
+        # If user explicitly denies saving
+        if any(tok in lowered for tok in ["no", "not now", "don't save", "dont save", "do not save", "nope"]):
+            agent_state["current_phase"] = "complete"
+            response_payload = {
+                "type": "permission_denied",
+                "content": "Okay — I won't save anything. We can keep the plan here or revise it.",
+                "phase": "permission_check"
+            }
+            return response_payload
+
+        # If user asks to modify the plan before saving
+        # Accept phrases like "change X", "edit", "make day 1 easier", etc.
+        if any(tok in lowered for tok in ["change", "edit", "modify", "make", "adjust", "revise"]):
+            # Append the user's edit request to conversation and move back to action_planning to regenerate
+            agent_state["conversation_history"].append({"role": "user", "content": user_input, "ts": datetime.now().isoformat()})
+            agent_state["current_phase"] = "action_planning"
+            response_payload = {
+                "type": "modify_request",
+                "content": "Noted. I'll update the plan based on your request and show you the revised draft.",
+                "phase": "permission_check"
+            }
+            return response_payload
+
+        # If we reach here, the user's answer was unclear — ask a short clarifying permission question
+        clarification = "Do you want me to save the plan to a new AI Brain file? (yes / no) Or say 'edit' to change the plan."
+        agent_state["conversation_history"].append({"role": "assistant", "content": clarification, "ts": datetime.now().isoformat()})
+        response_payload = {"type": "permission_clarify", "content": clarification, "phase": "permission_check"}
+        return response_payload
+
+    # ----------------- PHASE: COMPLETE -----------------
+    if phase == "complete":
+        # Final summary: show where things were saved (if saved) and offer continuation
+        last_saved_id = agent_state["memory"].get("last_saved_aibrain_doc")
+        summary = {
+            "questions_answered": agent_state.get("question_count", 0),
+            "aibrain_doc_id": last_saved_id
+        }
+        response_payload = {
+            "type": "complete",
+            "content": "All done. Let me know if you want to continue or revise anything.",
+            "phase": "complete",
+            "summary": summary
+        }
+        return response_payload
+
+    # Default fallback
+    return {"type": "noop", "content": "No action taken.", "phase": phase}
+
 
 # ========== ENDPOINT ==========
+
 @app.route("/agent", methods=["POST"])
 def agent_endpoint():
     data = request.json or {}
     groq_api_key = data.get("groq_api_key")
     user_id = data.get("user_id")
-    user_input = data.get("answer")
-    
-    response = autonomous_agent(user_input, groq_api_key, user_id)
-    return jsonify(response)
+    user_input = data.get("answer") or data.get("message") or ""
+
+    # Forward to the conversational autonomous agent
+    result = autonomous_agent(user_input=user_input, api_key=groq_api_key, user_id=user_id)
+    return jsonify(result)
+
+
 
 @app.route('/reflect-analyze', methods=['POST'])
 def reflect_analyze():
