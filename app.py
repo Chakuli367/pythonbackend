@@ -312,7 +312,28 @@ def parse_story_analysis(analysis_text):
 
 
 
+def ai_query(prompt, api_key, system_msg=None, max_tokens=160):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": system_msg or ""},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": max_tokens
+    }
 
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers,
+        data=json.dumps(payload)
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+    
 
 # ========== GROQ CONFIG ==========
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
