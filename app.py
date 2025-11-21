@@ -1097,7 +1097,7 @@ def update_progress(user_id, doc_id):
     return jsonify(result)
 
 @app.route("/aibrain/<user_id>/<doc_id>/task/complete", methods=["POST"])
-def complete_task(user_id, doc_id):
+def complete_task01(user_id, doc_id):
     """Mark a task as complete"""
     data = request.json or {}
     day = data.get("day")
