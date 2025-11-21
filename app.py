@@ -418,11 +418,12 @@ class StudyGuide(BaseModel):
 
 class AgentState(TypedDict):
     """Complete state for the agent"""
-    messages: Annotated[List, operator.add]  # Conversation history
+    messages: Annotated[List, operator.add]
     user_id: str
     current_phase: str
     diagnostic_count: int
     social_analysis_count: int
+    api_key: str  # ADD THIS LINE - API key from frontend
     
     # Structured data from AI
     diagnostic_insight: Optional[DiagnosticInsight]
@@ -555,12 +556,12 @@ The guide should feel like:
 
 # ========== LLM SETUP ==========
 
-def get_llm(structured_output=None):
-    """Get Groq LLM with optional structured output"""
+def get_llm(api_key: str, structured_output=None):
+    """Get Groq LLM with optional structured output and provided API key"""
     llm = ChatGroq(
         model="llama-3.3-70b-versatile",
         temperature=0.7,
-        groq_api_key="your-groq-api-key"  # In production, use environment variable
+        groq_api_key=api_key  # Use the provided API key
     )
     if structured_output:
         return llm.with_structured_output(structured_output)
@@ -571,11 +572,14 @@ def get_llm(structured_output=None):
 def diagnostic_node(state: AgentState) -> AgentState:
     """Conduct initial diagnostic conversation"""
     count = state.get("diagnostic_count", 0)
+    api_key = state.get("api_key")  # Get API key from state
+    
+    if not api_key:
+        raise ValueError("API key not provided in state")
     
     if count >= 5:
         # Transition to analysis after 5 questions
-        # Generate diagnostic insight
-        llm = get_llm(structured_output=DiagnosticInsight)
+        llm = get_llm(api_key, structured_output=DiagnosticInsight)
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", DIAGNOSTIC_SYSTEM_PROMPT),
@@ -593,7 +597,7 @@ def diagnostic_node(state: AgentState) -> AgentState:
         }
     
     # Continue diagnostic conversation
-    llm = get_llm()
+    llm = get_llm(api_key)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", DIAGNOSTIC_SYSTEM_PROMPT),
@@ -609,14 +613,18 @@ def diagnostic_node(state: AgentState) -> AgentState:
         "diagnostic_count": count + 1,
         "current_phase": "diagnostic"
     }
+    
 
 def social_analysis_node(state: AgentState) -> AgentState:
     """Deep dive into specific social skills"""
     count = state.get("social_analysis_count", 0)
+    api_key = state.get("api_key")
+    
+    if not api_key:
+        raise ValueError("API key not provided in state")
     
     if count >= 3:
-        # Generate structured analysis
-        llm = get_llm(structured_output=SocialSkillAnalysis)
+        llm = get_llm(api_key, structured_output=SocialSkillAnalysis)
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", SOCIAL_ANALYSIS_SYSTEM_PROMPT),
@@ -633,8 +641,7 @@ def social_analysis_node(state: AgentState) -> AgentState:
             "messages": [AIMessage(content=f"I've identified your key skill gaps: {', '.join(analysis.skill_gaps)}. Would you like me to create a personalized 5-day study guide to help you develop these skills?")]
         }
     
-    # Continue analysis conversation
-    llm = get_llm()
+    llm = get_llm(api_key)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", SOCIAL_ANALYSIS_SYSTEM_PROMPT),
@@ -654,10 +661,13 @@ def social_analysis_node(state: AgentState) -> AgentState:
 def study_guide_permission_node(state: AgentState) -> AgentState:
     """Handle study guide creation permission"""
     last_message = state["messages"][-1].content.lower()
+    api_key = state.get("api_key")
+    
+    if not api_key:
+        raise ValueError("API key not provided in state")
     
     if any(word in last_message for word in ["yes", "sure", "okay", "y", "please"]):
-        # Generate study guide
-        llm = get_llm(structured_output=StudyGuide)
+        llm = get_llm(api_key, structured_output=StudyGuide)
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", STUDY_GUIDE_SYSTEM_PROMPT),
@@ -687,10 +697,16 @@ def study_guide_permission_node(state: AgentState) -> AgentState:
             "messages": [AIMessage(content="I need a clear yes or no - would you like me to create the study guide?")],
             "current_phase": "study_guide_permission"
         }
+        
 
 def conversation_analysis_node(state: AgentState) -> AgentState:
     """Analyze full conversation for insights"""
-    llm = get_llm(structured_output=ConversationInsight)
+    api_key = state.get("api_key")
+    
+    if not api_key:
+        raise ValueError("API key not provided in state")
+    
+    llm = get_llm(api_key, structured_output=ConversationInsight)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", CONVERSATION_ANALYSIS_SYSTEM_PROMPT),
@@ -709,7 +725,12 @@ def conversation_analysis_node(state: AgentState) -> AgentState:
 
 def goal_setting_node(state: AgentState) -> AgentState:
     """Create SMART goals"""
-    llm = get_llm(structured_output=GoalSet)
+    api_key = state.get("api_key")
+    
+    if not api_key:
+        raise ValueError("API key not provided in state")
+    
+    llm = get_llm(api_key, structured_output=GoalSet)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", GOAL_SETTING_SYSTEM_PROMPT),
@@ -731,9 +752,15 @@ def goal_setting_node(state: AgentState) -> AgentState:
         "messages": [AIMessage(content=f"Here are your 3 SMART goals:\n\n{goals_text}\n\nNow I'll create your 5-day action plan.")]
     }
 
+
 def action_planning_node(state: AgentState) -> AgentState:
     """Create detailed action plan"""
-    llm = get_llm(structured_output=ActionPlan)
+    api_key = state.get("api_key")
+    
+    if not api_key:
+        raise ValueError("API key not provided in state")
+    
+    llm = get_llm(api_key, structured_output=ActionPlan)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", ACTION_PLANNING_SYSTEM_PROMPT),
@@ -749,6 +776,7 @@ def action_planning_node(state: AgentState) -> AgentState:
         "current_phase": "save_permission",
         "messages": [AIMessage(content=f"I've created '{action_plan.plan_title}' - a complete 5-day action plan. Would you like me to save this to your AI Brain so you can track your progress?")]
     }
+
 
 def serialize_messages(messages):
     """Convert LangChain messages to Firebase-safe format"""
@@ -998,9 +1026,13 @@ def agent_endpoint():
     user_id = data.get("user_id")
     user_message = data.get("message", "")
     session_id = data.get("session_id", user_id)
+    api_key = data.get("api_key")  # Get API key from request
     
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
+    
+    if not api_key:
+        return jsonify({"error": "api_key required"}), 400
     
     # Get or create session state
     if session_id not in sessions:
@@ -1009,7 +1041,8 @@ def agent_endpoint():
             "user_id": user_id,
             "current_phase": "diagnostic",
             "diagnostic_count": 0,
-            "social_analysis_count": 0
+            "social_analysis_count": 0,
+            "api_key": api_key  # Store API key in session
         }
         
         return jsonify({
@@ -1021,9 +1054,15 @@ def agent_endpoint():
     # Add user message to state
     state = sessions[session_id]
     state["messages"].append(HumanMessage(content=user_message))
+    state["api_key"] = api_key  # Update API key in case it changed
     
-    # Run graph
-    result = agent_graph.invoke(state)
+    # Run graph with error handling
+    try:
+        result = agent_graph.invoke(state)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Processing error: {str(e)}"}), 500
     
     # Update session
     sessions[session_id] = result
@@ -1045,6 +1084,8 @@ def agent_endpoint():
         response["action_plan"] = result.get("action_plan").dict() if result.get("action_plan") else None
     
     return jsonify(response)
+
+
 
 @app.route("/agent/reset", methods=["POST"])
 def reset_session():
