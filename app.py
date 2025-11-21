@@ -12,6 +12,14 @@ from datetime import datetime, timedelta
 import time
 import requests
 from firebase_admin import credentials, firestore
+from typing import TypedDict, Annotated, Literal, Optional, List
+from langgraph.graph import StateGraph, END
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from pydantic import BaseModel, Field
+from datetime import datetime
+import operator
 
 load_dotenv()
 
@@ -339,234 +347,808 @@ def ai_query(prompt, api_key, system_msg=None, max_tokens=160):
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "llama-3.3-70b-versatile"
 
+class DiagnosticInsight(BaseModel):
+    """User's primary social challenge identified"""
+    main_challenge: str = Field(description="The core social skill challenge")
+    supporting_evidence: str = Field(description="Evidence from conversation")
+    confidence_level: Literal["low", "medium", "high"] = Field(description="Confidence in assessment")
+
+class SocialSkillAnalysis(BaseModel):
+    """Detailed social skills assessment"""
+    skill_gaps: List[str] = Field(description="Specific skills needing improvement")
+    strengths: List[str] = Field(description="Existing social strengths")
+    context: str = Field(description="Social contexts where challenges occur")
+    severity: Literal["mild", "moderate", "significant"] = Field(description="Impact level")
+
+class ConversationInsight(BaseModel):
+    """Key insights from full conversation analysis"""
+    recurring_challenge: str = Field(description="Pattern identified across conversation")
+    primary_strength: str = Field(description="User's main social strength")
+    actionable_insight: str = Field(description="Specific insight user can act on")
+    emotional_state: str = Field(description="User's emotional readiness for change")
+
+class SMARTGoal(BaseModel):
+    """Single SMART goal"""
+    goal: str = Field(description="The goal statement")
+    specific: str = Field(description="What exactly will be achieved")
+    measurable: str = Field(description="How progress will be measured")
+    achievable: str = Field(description="Why this is realistic")
+    relevant: str = Field(description="How this connects to user's challenge")
+    timebound: str = Field(description="Timeline for achievement")
+
+class GoalSet(BaseModel):
+    """Collection of 3 SMART goals"""
+    goals: List[SMARTGoal] = Field(description="Three progressive SMART goals", min_items=3, max_items=3)
+
+class DailyTask(BaseModel):
+    """Single task for a day"""
+    task_title: str = Field(description="Brief task name")
+    description: str = Field(description="Detailed task description")
+    duration_minutes: int = Field(description="Estimated time to complete")
+    difficulty: Literal["easy", "medium", "challenging"] = Field(description="Task difficulty")
+    why_this_matters: str = Field(description="Connection to user's goals")
+
+class DayPlan(BaseModel):
+    """Plan for one day"""
+    day: int = Field(description="Day number (1-5)")
+    theme: str = Field(description="Focus area for this day")
+    tasks: List[DailyTask] = Field(description="2-3 tasks for the day", min_items=2, max_items=3)
+    reflection_prompt: str = Field(description="End-of-day reflection question")
+
+class ActionPlan(BaseModel):
+    """Complete 5-day action plan"""
+    plan_title: str = Field(description="Title for this action plan")
+    days: List[DayPlan] = Field(description="5 days of structured activities", min_items=5, max_items=5)
+    success_metrics: List[str] = Field(description="How to measure overall success")
+
+class StudyGuideDay(BaseModel):
+    """One day of study material"""
+    day: int = Field(description="Day number (1-5)")
+    topic: str = Field(description="Main topic to study")
+    key_concepts: List[str] = Field(description="3-4 key concepts", min_items=3, max_items=4)
+    practical_exercise: str = Field(description="Hands-on practice activity")
+    resources: List[str] = Field(description="Recommended resources")
+
+class StudyGuide(BaseModel):
+    """5-day social skills study guide"""
+    guide_title: str = Field(description="Title for study guide")
+    days: List[StudyGuideDay] = Field(description="5 days of study material", min_items=5, max_items=5)
+
 # ========== AGENT STATE ==========
-agent_state = {
-    "current_phase": "diagnostic",
-    "user_data": {},
-    "conversation_history": [],
-    "tasks_completed": [],
-    "memory": {},
-    "user_id": None,
-    "question_count": 0
-}
 
-# =================== FULL UPDATED autonomous_agent + endpoint ===================
+class AgentState(TypedDict):
+    """Complete state for the agent"""
+    messages: Annotated[List, operator.add]  # Conversation history
+    user_id: str
+    current_phase: str
+    diagnostic_count: int
+    social_analysis_count: int
+    
+    # Structured data from AI
+    diagnostic_insight: Optional[DiagnosticInsight]
+    social_analysis: Optional[SocialSkillAnalysis]
+    conversation_insight: Optional[ConversationInsight]
+    goals: Optional[GoalSet]
+    action_plan: Optional[ActionPlan]
+    study_guide: Optional[StudyGuide]
+    
+    # User decisions
+    save_study_guide: Optional[bool]
+    save_action_plan: Optional[bool]
+    
+    # Firebase references
+    aibrain_doc_id: Optional[str]
 
-# (Assumes the rest of your file remains unchanged: imports, ai_query, parse_ai_plan_to_firebase_format, update_firebase_task_plan, agent_state, etc.)
-def autonomous_agent(user_input=None, api_key=None, user_id=None):
-    """
-    Fully updated autonomous agent:
-    - Phase prepended to responses
-    - Magic word 'CHAKULIGOOD' to skip phase
-    - 'REPEAT' to repeat last assistant message
-    - 'SUMMARY' to show conversation summary
-    - Progress display for diagnostic & social_skills_analysis
-    """
-    if not api_key:
-        return {"type": "error", "content": "API Key not provided.", "phase": "error"}
-    if not user_id:
-        return {"type": "error", "content": "User ID not provided.", "phase": "error"}
+# ========== PROMPTS ==========
 
-    agent_state["user_id"] = user_id
-    current_phase = agent_state.get("current_phase", "diagnostic")
+DIAGNOSTIC_SYSTEM_PROMPT = """You are Alex, a warm, empathetic social skills coach with a PhD in Social Psychology and 15 years of experience helping people build genuine connections.
 
-    # Initialize conversation_history if not present
-    if "conversation_history" not in agent_state:
-        agent_state["conversation_history"] = []
+Your role in this DIAGNOSTIC phase is to:
+1. Build rapport and make the user feel heard and understood
+2. Gently explore their social challenges without making them feel judged
+3. Ask thoughtful, open-ended questions that reveal deeper patterns
+4. Reflect back what you hear to show understanding
+5. Identify the ROOT CAUSE, not just surface symptoms
 
-    # Append user input
-    if user_input:
-        agent_state["conversation_history"].append({
-            "role": "user",
-            "content": user_input,
-            "ts": datetime.now().isoformat()
-        })
+Your conversation style:
+- Warm and conversational, like talking to a trusted friend
+- Use reflective listening ("It sounds like...")
+- Ask ONE question at a time
+- Keep responses under 80 words
+- Show genuine curiosity and care
+- Avoid clinical or therapeutic jargon
 
-    # ------------------ MAGIC COMMANDS ------------------
-    if user_input:
-        lowered = user_input.strip().lower()
-        # Jump to next phase
-        if "chakuligood" in lowered:
-            phase_order = [
-                "diagnostic",
-                "social_skills_analysis",
-                "permission_check_study_guide",
-                "conversation_analysis",
-                "goal_setting",
-                "action_planning",
-                "permission_check",
-                "complete"
-            ]
-            try:
-                next_idx = phase_order.index(current_phase) + 1
-                next_phase = phase_order[next_idx] if next_idx < len(phase_order) else current_phase
-                agent_state["current_phase"] = next_phase
-                agent_state["question_count"] = 0
-                return {"type": "message", "content": f"[{next_phase.upper()}] Phase jumped via CHAKULIGOOD.", "phase": next_phase}
-            except ValueError:
-                pass
+Remember: You're discovering their unique story, not diagnosing from a checklist."""
+
+SOCIAL_ANALYSIS_SYSTEM_PROMPT = """You are Alex, diving deeper into the user's specific social skill challenges.
+
+Your goal is to precisely identify:
+1. WHICH social skills need development (e.g., active listening, reading body language, initiating conversations, managing conflict, etc.)
+2. The CONTEXTS where these challenges appear (work, friendships, dating, family, etc.)
+3. What they've already tried and why it didn't work
+4. Their learning style and preferences
+
+Be specific and actionable. Instead of "communication issues," identify "difficulty maintaining eye contact during emotional conversations" or "tendency to interrupt when excited about a topic."
+
+Keep asking until you can create a laser-focused development plan that addresses THEIR specific needs, not generic social skills advice."""
+
+CONVERSATION_ANALYSIS_SYSTEM_PROMPT = """You are Alex, now analyzing the complete conversation to extract transformative insights.
+
+Analyze the conversation deeply:
+1. What is the ONE recurring pattern that shows up repeatedly?
+2. What strength does the user possess that they might not fully recognize?
+3. What is the most actionable insight that could create immediate positive change?
+4. What is the user's emotional readiness for change? (resistant, cautious, ready, eager)
+
+Look for:
+- Contradictions between what they say and what they describe doing
+- Underlying beliefs driving their behavior
+- Environmental factors they haven't considered
+- Past successes they're not leveraging
+
+Be brutally honest but compassionate. This analysis will drive everything that follows."""
+
+GOAL_SETTING_SYSTEM_PROMPT = """You are Alex, transforming insights into concrete, achievable SMART goals.
+
+Create 3 progressive goals that:
+1. START WHERE THEY ARE (not where you wish they were)
+2. Build on each other (Goal 1 → Goal 2 → Goal 3)
+3. Are specific enough to know when they're achieved
+4. Connect directly to their stated challenges
+5. Feel motivating, not overwhelming
+
+Each goal should:
+- Be achievable within 2-4 weeks
+- Have clear success criteria
+- Address their specific context (not generic advice)
+- Build confidence progressively
+
+Example of GOOD goal: "Initiate one conversation per week with a colleague by asking about their weekend, and maintain eye contact for at least 50% of the conversation"
+
+Example of BAD goal: "Improve social skills" or "Be more confident"
+
+Make them feel like these goals were designed specifically for THEM."""
+
+ACTION_PLANNING_SYSTEM_PROMPT = """You are Alex, creating a detailed 5-day action plan that transforms goals into daily practice.
+
+Design a plan that:
+1. Starts EASY (Day 1 should feel almost too simple)
+2. Builds skills progressively each day
+3. Includes SPECIFIC actions, not vague suggestions
+4. Fits into their real life (consider their schedule, energy, context)
+5. Has built-in reflection to track progress
+
+Each day should have:
+- A clear theme that builds on previous days
+- 2-3 concrete tasks with time estimates
+- Mix of preparation, practice, and reflection
+- Tasks that feel doable even on a tough day
+
+Day 1: Foundation & Observation
+Day 2: Low-stakes Practice
+Day 3: Increasing Challenge
+Day 4: Real-world Application
+Day 5: Integration & Reflection
+
+Make it feel like a journey, not a checklist. Each task should have a "why this matters" explanation that connects to their goals."""
+
+STUDY_GUIDE_SYSTEM_PROMPT = """You are Alex, creating a 5-day educational study guide on the social skills they need to develop.
+
+Design learning content that:
+1. Teaches the THEORY behind the skills (why they work)
+2. Provides practical exercises to build muscle memory
+3. Progresses from foundational concepts to advanced application
+4. Includes resources for deeper learning
+5. Is tailored to their specific skill gaps
+
+Each day should include:
+- 3-4 key concepts explained clearly
+- One hands-on practical exercise
+- Recommended resources (articles, videos, books)
+- Real-world examples relevant to their context
+
+The guide should feel like:
+- A mini-course designed just for them
+- Educational but not academic
+- Practical and immediately applicable
+- Building toward mastery, not just awareness"""
+
+# ========== LLM SETUP ==========
+
+def get_llm(structured_output=None):
+    """Get Groq LLM with optional structured output"""
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        temperature=0.7,
+        groq_api_key="your-groq-api-key"  # In production, use environment variable
+    )
+    if structured_output:
+        return llm.with_structured_output(structured_output)
+    return llm
+
+# ========== NODE FUNCTIONS ==========
+
+def diagnostic_node(state: AgentState) -> AgentState:
+    """Conduct initial diagnostic conversation"""
+    count = state.get("diagnostic_count", 0)
+    
+    if count >= 5:
+        # Transition to analysis after 5 questions
+        # Generate diagnostic insight
+        llm = get_llm(structured_output=DiagnosticInsight)
         
-        # Repeat last assistant message
-        if "repeat" in lowered:
-            last_assistant = next(
-                (msg["content"] for msg in reversed(agent_state["conversation_history"]) if msg["role"] == "assistant"),
-                "No previous assistant message."
-            )
-            return {"type": "message", "content": f"[{current_phase.upper()}] {last_assistant}", "phase": current_phase}
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", DIAGNOSTIC_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="messages"),
+            ("system", "Based on this conversation, provide a structured diagnostic insight.")
+        ])
+        
+        chain = prompt | llm
+        insight = chain.invoke({"messages": state["messages"]})
+        
+        return {
+            "diagnostic_insight": insight,
+            "current_phase": "social_analysis",
+            "messages": [AIMessage(content=f"I now have a clear understanding of your main challenge: {insight.main_challenge}. Let me ask a few more specific questions to pinpoint exactly which skills we should focus on.")]
+        }
+    
+    # Continue diagnostic conversation
+    llm = get_llm()
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", DIAGNOSTIC_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="messages"),
+        ("system", f"This is question {count + 1} of 5. Ask ONE insightful follow-up question.")
+    ])
+    
+    chain = prompt | llm
+    response = chain.invoke({"messages": state["messages"]})
+    
+    return {
+        "messages": [response],
+        "diagnostic_count": count + 1,
+        "current_phase": "diagnostic"
+    }
 
-        # Summary command
-        if "summary" in lowered:
-            summary = agent_state.get("memory", {}).copy()
-            return {"type": "summary", "content": f"[{current_phase.upper()}] Current Phase: {current_phase}\nMemory: {json.dumps(summary, indent=2)}", "phase": current_phase}
+def social_analysis_node(state: AgentState) -> AgentState:
+    """Deep dive into specific social skills"""
+    count = state.get("social_analysis_count", 0)
+    
+    if count >= 3:
+        # Generate structured analysis
+        llm = get_llm(structured_output=SocialSkillAnalysis)
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", SOCIAL_ANALYSIS_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="messages"),
+            ("system", "Provide detailed social skills analysis based on the conversation.")
+        ])
+        
+        chain = prompt | llm
+        analysis = chain.invoke({"messages": state["messages"]})
+        
+        return {
+            "social_analysis": analysis,
+            "current_phase": "study_guide_permission",
+            "messages": [AIMessage(content=f"I've identified your key skill gaps: {', '.join(analysis.skill_gaps)}. Would you like me to create a personalized 5-day study guide to help you develop these skills?")]
+        }
+    
+    # Continue analysis conversation
+    llm = get_llm()
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SOCIAL_ANALYSIS_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="messages"),
+        ("system", f"Question {count + 1} of 3. Identify SPECIFIC social skills that need development.")
+    ])
+    
+    chain = prompt | llm
+    response = chain.invoke({"messages": state["messages"]})
+    
+    return {
+        "messages": [response],
+        "social_analysis_count": count + 1,
+        "current_phase": "social_analysis"
+    }
 
-    # ------------------ PHASE: DIAGNOSTIC ------------------
-    if current_phase == "diagnostic":
-        agent_state["question_count"] = agent_state.get("question_count", 0) + 1
-        prompt = f"""
-You are Alex — a warm, empathetic social skills coach.
-Conversation so far: {json.dumps(agent_state['conversation_history'], indent=2)}
-Respond naturally, short (under 80 words), reference user messages, ask ONE follow-up question.
-"""
-        next_message = ai_query(prompt, api_key, system_msg="You are Alex, friendly coach.", max_tokens=160)
-        agent_state["conversation_history"].append({"role": "assistant", "content": next_message, "ts": datetime.now().isoformat()})
+def study_guide_permission_node(state: AgentState) -> AgentState:
+    """Handle study guide creation permission"""
+    last_message = state["messages"][-1].content.lower()
+    
+    if any(word in last_message for word in ["yes", "sure", "okay", "y", "please"]):
+        # Generate study guide
+        llm = get_llm(structured_output=StudyGuide)
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", STUDY_GUIDE_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="messages"),
+            ("system", f"Create study guide for: {state['social_analysis'].skill_gaps}")
+        ])
+        
+        chain = prompt | llm
+        study_guide = chain.invoke({"messages": state["messages"]})
+        
+        return {
+            "study_guide": study_guide,
+            "save_study_guide": True,
+            "current_phase": "conversation_analysis",
+            "messages": [AIMessage(content=f"Perfect! I've created '{study_guide.guide_title}' for you. Now let me analyze our full conversation to create your personalized goals.")]
+        }
+    
+    elif any(word in last_message for word in ["no", "not", "skip"]):
+        return {
+            "save_study_guide": False,
+            "current_phase": "conversation_analysis",
+            "messages": [AIMessage(content="No problem! Let me move forward with analyzing our conversation and creating your goals.")]
+        }
+    
+    else:
+        return {
+            "messages": [AIMessage(content="I need a clear yes or no - would you like me to create the study guide?")],
+            "current_phase": "study_guide_permission"
+        }
 
-        # Automatic phase transition after 5 turns
-        if agent_state.get("question_count", 0) >= 5:
-            agent_state["current_phase"] = "social_skills_analysis"
-            agent_state["question_count"] = 0
+def conversation_analysis_node(state: AgentState) -> AgentState:
+    """Analyze full conversation for insights"""
+    llm = get_llm(structured_output=ConversationInsight)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", CONVERSATION_ANALYSIS_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="messages"),
+        ("system", "Provide deep conversation analysis with actionable insights.")
+    ])
+    
+    chain = prompt | llm
+    insight = chain.invoke({"messages": state["messages"]})
+    
+    return {
+        "conversation_insight": insight,
+        "current_phase": "goal_setting",
+        "messages": [AIMessage(content=f"Key insight: {insight.actionable_insight}\n\nYour strength: {insight.primary_strength}\n\nLet me create your goals now.")]
+    }
 
-        return {"type": "message", "content": f"[DIAGNOSTIC — Q{agent_state.get('question_count',0)}/5] {next_message}", "phase": "diagnostic", "progress": agent_state.get("question_count", 0)}
+def goal_setting_node(state: AgentState) -> AgentState:
+    """Create SMART goals"""
+    llm = get_llm(structured_output=GoalSet)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", GOAL_SETTING_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="messages"),
+        ("system", f"Create goals addressing: {state['conversation_insight'].recurring_challenge}")
+    ])
+    
+    chain = prompt | llm
+    goals = chain.invoke({"messages": state["messages"]})
+    
+    goals_text = "\n\n".join([
+        f"🎯 Goal {i+1}: {g.goal}\n   Measurable: {g.measurable}\n   Timeline: {g.timebound}"
+        for i, g in enumerate(goals.goals)
+    ])
+    
+    return {
+        "goals": goals,
+        "current_phase": "action_planning",
+        "messages": [AIMessage(content=f"Here are your 3 SMART goals:\n\n{goals_text}\n\nNow I'll create your 5-day action plan.")]
+    }
 
-    # ------------------ PHASE: SOCIAL SKILLS ANALYSIS ------------------
-    if current_phase == "social_skills_analysis":
-        agent_state["question_count"] = agent_state.get("question_count", 0) + 1
-        prompt = f"""
-You are Alex, social skills coach.
-Discover exactly which social skills the user struggles with.
-Reference user's previous messages:
-{json.dumps(agent_state['conversation_history'], indent=2)}
-Ask ONE short natural question.
-"""
-        next_message = ai_query(prompt, api_key, system_msg="Human-like social coach.", max_tokens=160)
-        agent_state["conversation_history"].append({"role": "assistant", "content": next_message, "ts": datetime.now().isoformat()})
+def action_planning_node(state: AgentState) -> AgentState:
+    """Create detailed action plan"""
+    llm = get_llm(structured_output=ActionPlan)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", ACTION_PLANNING_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="messages"),
+        ("system", f"Create plan for goals: {[g.goal for g in state['goals'].goals]}")
+    ])
+    
+    chain = prompt | llm
+    action_plan = chain.invoke({"messages": state["messages"]})
+    
+    return {
+        "action_plan": action_plan,
+        "current_phase": "save_permission",
+        "messages": [AIMessage(content=f"I've created '{action_plan.plan_title}' - a complete 5-day action plan. Would you like me to save this to your AI Brain so you can track your progress?")]
+    }
 
-        if agent_state["question_count"] >= 3:
-            agent_state["current_phase"] = "permission_check_study_guide"
-            agent_state["question_count"] = 0
+def serialize_messages(messages):
+    """Convert LangChain messages to Firebase-safe format"""
+    serialized = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            role = "user"
+        elif isinstance(msg, AIMessage):
+            role = "assistant"
+        elif isinstance(msg, SystemMessage):
+            role = "system"
+        else:
+            role = "unknown"
+        
+        serialized.append({
+            "role": role,
+            "content": msg.content,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    return serialized
 
-        return {"type": "message", "content": f"[SOCIAL_SKILLS_ANALYSIS — Q{agent_state.get('question_count',0)}/3] {next_message}", "phase": "social_skills_analysis", "progress": agent_state.get("question_count", 0)}
+def save_permission_node(state: AgentState) -> AgentState:
+    """Handle save permission"""
+    last_message = state["messages"][-1].content.lower()
+    
+    if any(word in last_message for word in ["yes", "sure", "save", "okay", "y"]):
+        # Save to Firebase
+        user_ref = db.collection("users").document(state["user_id"])
+        aibrain_ref = user_ref.collection("aibrain").document()
+        
+        # Prepare data for Firebase
+        firebase_data = {
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+            "status": "active",
+            "user_id": state["user_id"],
+            
+            # Structured insights
+            "diagnostic_insight": state["diagnostic_insight"].dict() if state.get("diagnostic_insight") else None,
+            "social_analysis": state["social_analysis"].dict() if state.get("social_analysis") else None,
+            "conversation_insight": state["conversation_insight"].dict() if state.get("conversation_insight") else None,
+            
+            # Goals and plans
+            "goals": state["goals"].dict() if state.get("goals") else None,
+            "action_plan": state["action_plan"].dict() if state.get("action_plan") else None,
+            "study_guide": state["study_guide"].dict() if state.get("study_guide") else None,
+            
+            # Conversation history
+            "messages": serialize_messages(state["messages"]),
+            
+            # Metadata
+            "total_messages": len(state["messages"]),
+            "diagnostic_questions_asked": state.get("diagnostic_count", 0),
+            "social_analysis_questions_asked": state.get("social_analysis_count", 0)
+        }
+        
+        # Save to Firebase
+        aibrain_ref.set(firebase_data)
+        
+        # Also create a quick-access summary document
+        summary_ref = user_ref.collection("summaries").document(aibrain_ref.id)
+        summary_ref.set({
+            "aibrain_doc_id": aibrain_ref.id,
+            "created_at": datetime.utcnow().isoformat(),
+            "main_challenge": state["diagnostic_insight"].main_challenge if state.get("diagnostic_insight") else "Not identified",
+            "skill_gaps": state["social_analysis"].skill_gaps if state.get("social_analysis") else [],
+            "goal_count": len(state["goals"].goals) if state.get("goals") else 0,
+            "plan_title": state["action_plan"].plan_title if state.get("action_plan") else "No plan",
+            "status": "active"
+        })
+        
+        return {
+            "save_action_plan": True,
+            "aibrain_doc_id": aibrain_ref.id,
+            "current_phase": "complete",
+            "messages": [AIMessage(content=f"✅ Saved! Your personalized plan is ready. Check your AI Brain (ID: {aibrain_ref.id}) anytime to track progress. I'm here whenever you need support!")]
+        }
+    
+    elif any(word in last_message for word in ["no", "not", "skip"]):
+        return {
+            "save_action_plan": False,
+            "current_phase": "complete",
+            "messages": [AIMessage(content="No problem! You can always ask me to save it later. Good luck with your social skills journey!")]
+        }
+    
+    else:
+        return {
+            "messages": [AIMessage(content="Would you like me to save this plan? (yes/no)")],
+            "current_phase": "save_permission"
+        }
 
-    # ------------------ PHASE: PERMISSION CHECK STUDY GUIDE ------------------
-    if current_phase == "permission_check_study_guide":
-        conv = agent_state.get("conversation_history", [])
-        if not user_input:
-            ask = "I now understand your social skill challenges. Shall I create a 5-day study guide for you?"
-            agent_state["conversation_history"].append({"role": "assistant", "content": ask, "ts": datetime.now().isoformat()})
-            return {"type": "permission_request", "content": f"[PERMISSION_CHECK_STUDY_GUIDE] {ask}", "phase": current_phase}
+def router(state: AgentState) -> str:
+    """Route to next node based on current phase"""
+    phase = state.get("current_phase", "diagnostic")
+    
+    routing_map = {
+        "diagnostic": "diagnostic",
+        "social_analysis": "social_analysis",
+        "study_guide_permission": "study_guide_permission",
+        "conversation_analysis": "conversation_analysis",
+        "goal_setting": "goal_setting",
+        "action_planning": "action_planning",
+        "save_permission": "save_permission",
+        "complete": END
+    }
+    
+    return routing_map.get(phase, END)
 
-        lowered = user_input.strip().lower()
-        if any(tok in lowered for tok in ["yes", "y", "sure", "save", "ok", "go ahead"]):
-            prompt = f"Generate JSON 5-day social skill study guide from conversation: {json.dumps(conv, indent=2)}"
-            guide_json = ai_query(prompt, api_key, system_msg="Return only JSON array.", max_tokens=800)
-            agent_state["memory"]["social_study_guide_raw"] = guide_json
-            agent_state["current_phase"] = "conversation_analysis"
-            return {"type": "saved", "content": f"[PERMISSION_CHECK_STUDY_GUIDE] Study guide saved.", "phase": current_phase}
+# ========== BUILD GRAPH ==========
 
-        if any(tok in lowered for tok in ["no", "not now", "don't save"]):
-            agent_state["current_phase"] = "conversation_analysis"
-            return {"type": "permission_denied", "content": f"[PERMISSION_CHECK_STUDY_GUIDE] Study guide not saved.", "phase": current_phase}
+def create_agent_graph():
+    """Build the LangGraph workflow"""
+    workflow = StateGraph(AgentState)
+    
+    # Add nodes
+    workflow.add_node("diagnostic", diagnostic_node)
+    workflow.add_node("social_analysis", social_analysis_node)
+    workflow.add_node("study_guide_permission", study_guide_permission_node)
+    workflow.add_node("conversation_analysis", conversation_analysis_node)
+    workflow.add_node("goal_setting", goal_setting_node)
+    workflow.add_node("action_planning", action_planning_node)
+    workflow.add_node("save_permission", save_permission_node)
+    
+    # Set entry point
+    workflow.set_entry_point("diagnostic")
+    
+    # Add conditional edges
+    workflow.add_conditional_edges(
+        "diagnostic",
+        router,
+        {
+            "diagnostic": "diagnostic",
+            "social_analysis": "social_analysis"
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "social_analysis",
+        router,
+        {
+            "social_analysis": "social_analysis",
+            "study_guide_permission": "study_guide_permission"
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "study_guide_permission",
+        router,
+        {
+            "study_guide_permission": "study_guide_permission",
+            "conversation_analysis": "conversation_analysis"
+        }
+    )
+    
+    workflow.add_edge("conversation_analysis", "goal_setting")
+    workflow.add_edge("goal_setting", "action_planning")
+    
+    workflow.add_conditional_edges(
+        "action_planning",
+        router,
+        {
+            "save_permission": "save_permission"
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "save_permission",
+        router,
+        {
+            "save_permission": "save_permission",
+            END: END
+        }
+    )
+    
+    return workflow.compile()
 
-        if any(tok in lowered for tok in ["edit", "change", "modify"]):
-            agent_state["current_phase"] = "social_skills_analysis"
-            agent_state["conversation_history"].append({"role": "user", "content": user_input, "ts": datetime.now().isoformat()})
-            return {"type": "modify_request", "content": f"[PERMISSION_CHECK_STUDY_GUIDE] Will adjust study guide after further conversation.", "phase": current_phase}
+# ========== FIREBASE HELPER FUNCTIONS ==========
 
-    # ------------------ PHASE: CONVERSATION ANALYSIS ------------------
-    if current_phase == "conversation_analysis":
-        conv = agent_state.get("conversation_history", [])
-        prompt = f"""
-Analyze conversation and identify one recurring challenge, one strength, and one actionable insight.
-Conversation: {json.dumps(conv, indent=2)}
-"""
-        analysis = ai_query(prompt, api_key, system_msg="Specific, constructive, concise.", max_tokens=240)
-        agent_state["memory"]["analysis"] = analysis
-        agent_state["current_phase"] = "goal_setting"
-        return {"type": "insight", "content": f"[CONVERSATION_ANALYSIS] {analysis}", "phase": current_phase}
+def get_user_aibrain_docs(user_id: str, limit: int = 10):
+    """Retrieve user's AI Brain documents"""
+    docs = db.collection("users").document(user_id).collection("aibrain")\
+        .order_by("created_at", direction=firestore.Query.DESCENDING)\
+        .limit(limit)\
+        .stream()
+    
+    return [{"id": doc.id, **doc.to_dict()} for doc in docs]
 
-    # ------------------ PHASE: GOAL SETTING ------------------
-    if current_phase == "goal_setting":
-        conv = agent_state.get("conversation_history", [])
-        analysis = agent_state["memory"].get("analysis", "")
-        prompt = f"Create 3 SMART goals based on conversation:\nConversation: {json.dumps(conv)}\nAnalysis: {analysis}"
-        goals_text = ai_query(prompt, api_key, system_msg="3 concise SMART goals.", max_tokens=300)
-        agent_state["memory"]["goals"] = goals_text
-        agent_state["current_phase"] = "action_planning"
-        return {"type": "goals", "content": f"[GOAL_SETTING] {goals_text}", "phase": current_phase}
+def get_aibrain_doc(user_id: str, doc_id: str):
+    """Retrieve specific AI Brain document"""
+    doc = db.collection("users").document(user_id).collection("aibrain").document(doc_id).get()
+    
+    if doc.exists:
+        return {"id": doc.id, **doc.to_dict()}
+    return None
 
-    # ------------------ PHASE: ACTION PLANNING ------------------
-    if current_phase == "action_planning":
-        conv = agent_state.get("conversation_history", [])
-        goals = agent_state["memory"].get("goals", "")
-        prompt = f"Generate 5-day JSON action plan for user goals:\nConversation: {json.dumps(conv)}\nGoals: {goals}"
-        plan_json = ai_query(prompt, api_key, system_msg="Return JSON array only.", max_tokens=2000)
-        agent_state["memory"]["action_plan_raw"] = plan_json
-        agent_state["current_phase"] = "permission_check"
-        return {"type": "action_plan_preview", "content": f"[ACTION_PLANNING] {plan_json}", "phase": current_phase, "message": "I created a 5-day plan draft. May I save it to your AI Brain file?"}
+def update_aibrain_progress(user_id: str, doc_id: str, progress_data: dict):
+    """Update progress on an AI Brain plan"""
+    doc_ref = db.collection("users").document(user_id).collection("aibrain").document(doc_id)
+    
+    doc_ref.update({
+        "updated_at": datetime.utcnow().isoformat(),
+        "progress": firestore.ArrayUnion([{
+            **progress_data,
+            "timestamp": datetime.utcnow().isoformat()
+        }])
+    })
+    
+    return {"success": True, "doc_id": doc_id}
 
-    # ------------------ PHASE: PERMISSION CHECK ------------------
-    if current_phase == "permission_check":
-        if not user_input:
-            ask = "Do you want me to save the plan to a new AI Brain file? (yes / no / edit)"
-            agent_state["conversation_history"].append({"role": "assistant", "content": ask, "ts": datetime.now().isoformat()})
-            return {"type": "permission_request", "content": f"[PERMISSION_CHECK] {ask}", "phase": current_phase}
+def mark_task_complete(user_id: str, doc_id: str, day: int, task_index: int):
+    """Mark a specific task as complete"""
+    doc_ref = db.collection("users").document(user_id).collection("aibrain").document(doc_id)
+    doc = doc_ref.get()
+    
+    if doc.exists:
+        data = doc.to_dict()
+        action_plan = data.get("action_plan", {})
+        
+        if action_plan and "days" in action_plan:
+            # Update task completion status
+            if 0 <= day < len(action_plan["days"]):
+                if 0 <= task_index < len(action_plan["days"][day].get("tasks", [])):
+                    # Add completion marker
+                    completion_path = f"action_plan.days.{day}.tasks.{task_index}.completed"
+                    doc_ref.update({
+                        completion_path: True,
+                        f"action_plan.days.{day}.tasks.{task_index}.completed_at": datetime.utcnow().isoformat(),
+                        "updated_at": datetime.utcnow().isoformat()
+                    })
+                    
+                    return {"success": True, "message": "Task marked complete"}
+        
+    return {"success": False, "message": "Task not found"}
 
-        lowered = user_input.strip().lower()
-        if any(tok in lowered for tok in ["yes", "y", "sure", "save", "ok", "go ahead"]):
-            aibrain_ref = db.collection("users").document(user_id).collection("aibrain")
-            new_doc_ref = aibrain_ref.document()
-            new_doc_ref.set({
-                "created_at": datetime.utcnow().isoformat(),
-                "conversation_history": agent_state["conversation_history"],
-                "goals": agent_state["memory"].get("goals", ""),
-                "action_plan_raw": agent_state["memory"].get("action_plan_raw", ""),
-                "status": "saved"
-            })
-            agent_state["memory"]["last_saved_aibrain_doc"] = new_doc_ref.id
-            agent_state["current_phase"] = "complete"
-            return {"type": "saved", "content": f"[PERMISSION_CHECK] Saved to AI Brain (id: {new_doc_ref.id}).", "phase": current_phase, "aibrain_doc_id": new_doc_ref.id}
+# ========== FLASK ENDPOINT ==========
 
-        if any(tok in lowered for tok in ["no", "not now", "don't save"]):
-            agent_state["current_phase"] = "complete"
-            return {"type": "permission_denied", "content": f"[PERMISSION_CHECK] Not saved.", "phase": current_phase}
+# Global graph instance
+agent_graph = create_agent_graph()
 
-        if any(tok in lowered for tok in ["edit", "change", "modify"]):
-            agent_state["conversation_history"].append({"role": "user", "content": user_input, "ts": datetime.now().isoformat()})
-            agent_state["current_phase"] = "action_planning"
-            return {"type": "modify_request", "content": f"[PERMISSION_CHECK] Will revise plan.", "phase": current_phase}
-
-    # ------------------ PHASE: COMPLETE ------------------
-    if current_phase == "complete":
-        last_saved_id = agent_state["memory"].get("last_saved_aibrain_doc")
-        summary = {"questions_answered": agent_state.get("question_count", 0), "aibrain_doc_id": last_saved_id}
-        return {"type": "complete", "content": f"[COMPLETE] All done. You can revise or continue anytime.", "phase": current_phase, "summary": summary}
-
-    # Default fallback
-    return {"type": "noop", "content": f"[{current_phase.upper()}] No action taken.", "phase": current_phase}
-
-
-# ========== ENDPOINT ==========
+# Session storage (in production, use Redis or similar)
+sessions = {}
 
 @app.route("/agent", methods=["POST"])
 def agent_endpoint():
+    """Handle agent interactions"""
     data = request.json or {}
-    groq_api_key = data.get("groq_api_key")
     user_id = data.get("user_id")
-    user_input = data.get("answer") or data.get("message") or ""
+    user_message = data.get("message", "")
+    session_id = data.get("session_id", user_id)
+    
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    
+    # Get or create session state
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "messages": [AIMessage(content="Hi! I'm Alex, your social skills coach. I'm here to help you build genuine connections and feel more confident in social situations. What brings you here today?")],
+            "user_id": user_id,
+            "current_phase": "diagnostic",
+            "diagnostic_count": 0,
+            "social_analysis_count": 0
+        }
+        
+        return jsonify({
+            "message": sessions[session_id]["messages"][-1].content,
+            "phase": "diagnostic",
+            "session_id": session_id
+        })
+    
+    # Add user message to state
+    state = sessions[session_id]
+    state["messages"].append(HumanMessage(content=user_message))
+    
+    # Run graph
+    result = agent_graph.invoke(state)
+    
+    # Update session
+    sessions[session_id] = result
+    
+    # Extract response
+    last_message = result["messages"][-1].content
+    current_phase = result.get("current_phase", "unknown")
+    
+    response = {
+        "message": last_message,
+        "phase": current_phase,
+        "session_id": session_id
+    }
+    
+    # Add structured data if available
+    if current_phase == "complete" and result.get("aibrain_doc_id"):
+        response["aibrain_doc_id"] = result["aibrain_doc_id"]
+        response["goals"] = result.get("goals").dict() if result.get("goals") else None
+        response["action_plan"] = result.get("action_plan").dict() if result.get("action_plan") else None
+    
+    return jsonify(response)
 
-    # Forward to the conversational autonomous agent
-    result = autonomous_agent(user_input=user_input, api_key=groq_api_key, user_id=user_id)
+@app.route("/agent/reset", methods=["POST"])
+def reset_session():
+    """Reset agent session"""
+    data = request.json or {}
+    session_id = data.get("session_id")
+    
+    if session_id in sessions:
+        del sessions[session_id]
+    
+    return jsonify({"message": "Session reset successfully"})
+
+@app.route("/aibrain/<user_id>", methods=["GET"])
+def get_user_aibrains(user_id):
+    """Get all AI Brain documents for a user"""
+    limit = request.args.get("limit", 10, type=int)
+    docs = get_user_aibrain_docs(user_id, limit)
+    
+    return jsonify({
+        "user_id": user_id,
+        "count": len(docs),
+        "documents": docs
+    })
+
+@app.route("/aibrain/<user_id>/<doc_id>", methods=["GET"])
+def get_specific_aibrain(user_id, doc_id):
+    """Get specific AI Brain document"""
+    doc = get_aibrain_doc(user_id, doc_id)
+    
+    if doc:
+        return jsonify(doc)
+    else:
+        return jsonify({"error": "Document not found"}), 404
+
+@app.route("/aibrain/<user_id>/<doc_id>/progress", methods=["POST"])
+def update_progress(user_id, doc_id):
+    """Update progress on an AI Brain plan"""
+    data = request.json or {}
+    
+    progress_data = {
+        "type": data.get("type", "general"),  # general, task_complete, reflection, etc.
+        "day": data.get("day"),
+        "task_index": data.get("task_index"),
+        "notes": data.get("notes", ""),
+        "mood": data.get("mood"),  # How user felt during task
+        "difficulty": data.get("difficulty")  # How hard it was
+    }
+    
+    result = update_aibrain_progress(user_id, doc_id, progress_data)
     return jsonify(result)
 
+@app.route("/aibrain/<user_id>/<doc_id>/task/complete", methods=["POST"])
+def complete_task(user_id, doc_id):
+    """Mark a task as complete"""
+    data = request.json or {}
+    day = data.get("day")
+    task_index = data.get("task_index")
+    
+    if day is None or task_index is None:
+        return jsonify({"error": "day and task_index required"}), 400
+    
+    result = mark_task_complete(user_id, doc_id, day, task_index)
+    return jsonify(result)
+
+@app.route("/aibrain/<user_id>/<doc_id>", methods=["DELETE"])
+def delete_aibrain(user_id, doc_id):
+    """Delete an AI Brain document"""
+    try:
+        db.collection("users").document(user_id).collection("aibrain").document(doc_id).delete()
+        
+        # Also delete summary
+        db.collection("users").document(user_id).collection("summaries").document(doc_id).delete()
+        
+        return jsonify({"success": True, "message": "Document deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/aibrain/<user_id>/<doc_id>/export", methods=["GET"])
+def export_aibrain(user_id, doc_id):
+    """Export AI Brain document as JSON for user download"""
+    doc = get_aibrain_doc(user_id, doc_id)
+    
+    if doc:
+        # Format for easy reading
+        export_data = {
+            "export_date": datetime.utcnow().isoformat(),
+            "user_id": user_id,
+            "plan_created": doc.get("created_at"),
+            "main_challenge": doc.get("diagnostic_insight", {}).get("main_challenge"),
+            "goals": doc.get("goals"),
+            "action_plan": doc.get("action_plan"),
+            "study_guide": doc.get("study_guide"),
+            "conversation_summary": {
+                "total_messages": doc.get("total_messages"),
+                "key_insights": doc.get("conversation_insight")
+            }
+        }
+        
+        return jsonify(export_data)
+    else:
+        return jsonify({"error": "Document not found"}), 404
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
 
 
 @app.route('/reflect-analyze', methods=['POST'])
