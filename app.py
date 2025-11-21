@@ -2488,7 +2488,7 @@ CONVERSATION_STATES = [
 ]
 
 @app.route('/chat12', methods=['POST'])
-def chat():
+def chat12_endpoint():
     try:
         data = request.get_json()
         user_id = data.get("user_id")
