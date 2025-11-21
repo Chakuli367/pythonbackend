@@ -11,4 +11,6 @@ beautifulsoup4
 firebase-admin
 datetime
 google-cloud-firestore
-
+langgraph
+langchain-groq
+pydantic
