@@ -2487,7 +2487,7 @@ CONVERSATION_STATES = [
     "final_goal"     # Goal Confirmation
 ]
 
-@app.route('/chat', methods=['POST'])
+@app.route('/chat12', methods=['POST'])
 def chat():
     try:
         data = request.get_json()
