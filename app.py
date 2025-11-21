@@ -320,791 +320,247 @@ def parse_story_analysis(analysis_text):
 
 
 # ========== PYDANTIC MODELS ==========
+# ========== PYDANTIC MODELS ==========
 
-class DiagnosticInsight(BaseModel):
-    main_challenge: str = Field(description="The core social skill challenge")
-    supporting_evidence: str = Field(description="Evidence from conversation")
-    confidence_level: Literal["low", "medium", "high"] = Field(description="Confidence in assessment")
-
-class SocialSkillAnalysis(BaseModel):
-    skill_gaps: List[str] = Field(description="Specific skills needing improvement")
-    strengths: List[str] = Field(description="Existing social strengths")
-    context: str = Field(description="Social contexts where challenges occur")
-    severity: Literal["mild", "moderate", "significant"] = Field(description="Impact level")
-
-class ConversationInsight(BaseModel):
-    recurring_challenge: str = Field(description="Pattern identified across conversation")
-    primary_strength: str = Field(description="User's main social strength")
-    actionable_insight: str = Field(description="Specific insight user can act on")
-    emotional_state: str = Field(description="User's emotional readiness for change")
-
-class SMARTGoal(BaseModel):
-    goal: str = Field(description="The goal statement")
-    specific: str = Field(description="What exactly will be achieved")
-    measurable: str = Field(description="How progress will be measured")
-    achievable: str = Field(description="Why this is realistic")
-    relevant: str = Field(description="How this connects to user's challenge")
-    timebound: str = Field(description="Timeline for achievement")
-
-class GoalSet(BaseModel):
-    goals: List[SMARTGoal] = Field(description="Three progressive SMART goals", min_items=3, max_items=3)
-
-class DailyTask(BaseModel):
-    task_title: str = Field(description="Brief task name")
-    description: str = Field(description="Detailed task description")
-    duration_minutes: int = Field(description="Estimated time to complete")
-    difficulty: Literal["easy", "medium", "challenging"] = Field(description="Task difficulty")
-    why_this_matters: str = Field(description="Connection to user's goals")
-
-class DayPlan(BaseModel):
-    day: int = Field(description="Day number (1-5)")
-    theme: str = Field(description="Focus area for this day")
-    tasks: List[DailyTask] = Field(description="2-3 tasks for the day", min_items=2, max_items=3)
-    reflection_prompt: str = Field(description="End-of-day reflection question")
-
-class ActionPlan(BaseModel):
-    plan_title: str = Field(description="Title for this action plan")
-    days: List[DayPlan] = Field(description="5 days of structured activities", min_items=5, max_items=5)
-    success_metrics: List[str] = Field(description="How to measure overall success")
-
-class StudyGuideDay(BaseModel):
-    day: int = Field(description="Day number (1-5)")
-    topic: str = Field(description="Main topic to study")
-    key_concepts: List[str] = Field(description="3-4 key concepts", min_items=3, max_items=4)
-    practical_exercise: str = Field(description="Hands-on practice activity")
-    resources: List[str] = Field(description="Recommended resources")
+class DiagnosticSummary(BaseModel):
+    main_challenge: str = Field(description="The core social skill challenge identified")
+    emotional_state: str = Field(description="User's emotional state (anxious, frustrated, hopeful, etc.)")
+    context: str = Field(description="Where this challenge shows up most")
+    impact: str = Field(description="How this affects their life")
+    
+class SkillGapAssessment(BaseModel):
+    skill_gaps: List[str] = Field(description="3-5 specific skills needing improvement", min_items=3, max_items=5)
+    skill_ratings: dict = Field(description="Skill name -> rating out of 10")
+    primary_weakness: str = Field(description="The #1 skill to focus on")
+    hidden_strength: str = Field(description="One strength they might not recognize")
 
 class StudyGuide(BaseModel):
-    guide_title: str = Field(description="Title for study guide")
-    days: List[StudyGuideDay] = Field(description="5 days of study material", min_items=5, max_items=5)
+    title: str = Field(description="Study guide title")
+    lessons: List[dict] = Field(description="5 lessons with topics, concepts, exercises")
+    
+class GoalSet(BaseModel):
+    goal_1: dict = Field(description="Week 1 foundation goal")
+    goal_2: dict = Field(description="Week 2 expansion goal")
+    goal_3: dict = Field(description="Week 3-4 integration goal")
+    user_feedback: Optional[str] = Field(description="User's thoughts on goals")
 
-# ========== AGENT STATE ==========
+class ActionPlan(BaseModel):
+    plan_title: str = Field(description="Action plan title")
+    days: List[dict] = Field(description="5 days of tasks", min_items=5, max_items=5)
+    customizations: Optional[List[str]] = Field(description="User-requested changes")
 
-class AgentState(TypedDict):
-    messages: Annotated[List, operator.add]
+# ========== SESSION STORAGE ==========
+
+sessions = {}
+
+class PhaseState(TypedDict):
+    phase: int  # 1-6
+    messages: List
     user_id: str
-    current_phase: str
-    diagnostic_count: int
-    social_analysis_count: int
     api_key: str
     
-    diagnostic_insight: Optional[DiagnosticInsight]
-    social_analysis: Optional[SocialSkillAnalysis]
-    conversation_insight: Optional[ConversationInsight]
+    # Phase outputs
+    diagnostic_summary: Optional[DiagnosticSummary]
+    skill_assessment: Optional[SkillGapAssessment]
+    study_guide: Optional[StudyGuide]
     goals: Optional[GoalSet]
     action_plan: Optional[ActionPlan]
-    study_guide: Optional[StudyGuide]
-    
-    save_study_guide: Optional[bool]
-    save_action_plan: Optional[bool]
-    aibrain_doc_id: Optional[str]
-
-# ========== PROMPTS ==========
-
-DIAGNOSTIC_SYSTEM_PROMPT = """You are Alex, a warm, empathetic social skills coach with a PhD in Social Psychology and 15 years of experience helping people build genuine connections.
-
-=== YOUR ROLE IN THE DIAGNOSTIC PHASE ===
-This is the FIRST phase of the coaching journey. Your job is to understand WHO this person is and WHAT they're struggling with before jumping to solutions. Think of yourself as a detective with a warm heart - you're gathering clues while making the person feel completely safe and understood.
-
-=== CONVERSATION GOALS ===
-1. BUILD TRUST FIRST: The user needs to feel safe opening up. Start warm, not clinical.
-2. UNDERSTAND THE SURFACE PROBLEM: What do they SAY is wrong?
-3. DIG FOR THE ROOT CAUSE: What's the REAL underlying issue?
-4. MAP THEIR SOCIAL WORLD: Where do these problems show up? Work? Dating? Family? Friends?
-5. UNDERSTAND THEIR HISTORY: How long has this been happening? What triggered it?
-
-=== HOW TO CONDUCT THIS CONVERSATION ===
-
-**Opening (if this is your first response):**
-- Welcome them warmly
-- Acknowledge that reaching out takes courage
-- Ask ONE open-ended question to get them talking
-
-**Follow-up Questions (questions 2-5):**
-Use these types of questions strategically:
-
-EXPLORING questions:
-- "Can you tell me more about that?"
-- "What does that look like in your day-to-day life?"
-- "When did you first notice this?"
-
-CLARIFYING questions:
-- "When you say [X], what do you mean exactly?"
-- "Help me understand - are you saying that...?"
-
-DEEPENING questions:
-- "How does that make you feel when it happens?"
-- "What do you think is behind that?"
-- "What have you tried before?"
-
-CONTEXT questions:
-- "Where does this come up most - work, friendships, dating, family?"
-- "Is this something that happens with everyone or specific people?"
-
-=== CONVERSATION STYLE RULES ===
-1. Ask only ONE question per response (never overwhelm them)
-2. Keep responses under 80 words (be concise, not preachy)
-3. Use reflective listening: "It sounds like..." / "So what I'm hearing is..."
-4. Validate their feelings: "That sounds really frustrating" / "I can see why that would be hard"
-5. Be warm and conversational - like a caring friend, not a therapist
-6. NEVER use clinical jargon or make them feel like a patient
-7. NEVER give advice yet - this phase is purely about understanding
-8. Show genuine curiosity - you WANT to understand their unique story
-
-=== WHAT TO LOOK FOR ===
-As you listen, mentally note:
-- Patterns in their struggles (does the same thing happen in multiple contexts?)
-- Underlying beliefs ("I'm not interesting" / "People don't like me")
-- Triggers (what situations make it worse?)
-- Impact on their life (how much is this affecting them?)
-- Strengths they might not see (are they self-aware? Do they have some good relationships?)
-
-=== EXAMPLE CONVERSATION FLOW ===
-
-User: "I struggle with making friends"
-Alex: "Thanks for sharing that with me - it takes courage to open up about this. When you say you struggle with making friends, what does that actually look like for you? Is it starting conversations, keeping them going, or something else?"
-
-User: "I can start conversations but they never go anywhere"
-Alex: "So you're good at breaking the ice, but the connections don't seem to develop beyond that initial chat. That's actually a really specific insight. What do you think happens - do conversations just fizzle out, or is there a moment where things feel awkward?"
-
-User: "They just fizzle out, like we run out of things to say"
-Alex: "Ah, that 'running out of things to say' feeling - I hear that a lot. It sounds like the conversation hits a wall after the surface-level stuff. Does this happen more in certain situations, like at work versus social events?"
-
-=== REMEMBER ===
-- You're discovering their unique story, not diagnosing from a checklist
-- Every person's social challenges have a unique root cause
-- Your warmth and understanding IS part of the coaching
-- Don't rush - better to ask good questions than to miss the real issue"""
-
-SOCIAL_ANALYSIS_SYSTEM_PROMPT = """You are Alex, now in the SOCIAL ANALYSIS phase - diving deeper into the user's specific social skill challenges.
-
-=== YOUR ROLE IN THIS PHASE ===
-You've completed the diagnostic phase and have a general understanding of their challenge. Now you need to get SPECIFIC. Think of this as zooming in from the big picture to the precise skills that need work. Your goal is to identify EXACTLY which social skills need development so you can create a laser-focused plan.
-
-=== WHAT YOU ALREADY KNOW ===
-From the diagnostic phase, you understand their general challenge. Now you need to pinpoint:
-- The SPECIFIC micro-skills that are weak (not "communication" but "asking follow-up questions")
-- The EXACT contexts where problems occur (not "social situations" but "one-on-one conversations with new people at work")
-- Their current skill level (complete beginner vs. intermediate needing refinement)
-- What they've already tried and why it didn't work
-
-=== SOCIAL SKILLS CATEGORIES TO EXPLORE ===
-
-**Conversation Skills:**
-- Starting conversations (openers, approach anxiety)
-- Maintaining conversations (follow-up questions, active listening, sharing about yourself)
-- Ending conversations gracefully
-- Small talk vs. deep conversations
-- Storytelling and being engaging
-
-**Non-Verbal Communication:**
-- Eye contact (too little, too intense, inconsistent)
-- Body language (open vs. closed posture, mirroring)
-- Facial expressions (showing interest, appropriate reactions)
-- Voice (tone, pace, volume, enthusiasm)
-- Physical proximity and touch
-
-**Social Awareness:**
-- Reading social cues (knowing when someone wants to leave, sensing discomfort)
-- Understanding context (what's appropriate where)
-- Emotional intelligence (recognizing others' emotions)
-- Group dynamics (when to speak, how to include others)
-
-**Relationship Building:**
-- Moving from acquaintance to friend
-- Vulnerability and self-disclosure
-- Maintaining friendships (initiating contact, remembering details)
-- Handling conflicts and disagreements
-- Setting boundaries
-
-**Social Confidence:**
-- Managing anxiety in social situations
-- Dealing with rejection or awkwardness
-- Self-talk and mindset
-- Authenticity vs. performing
-
-=== HOW TO CONDUCT THIS CONVERSATION ===
-
-**Transition from Diagnostic:**
-Acknowledge what you've learned and signal you're going deeper:
-"I have a clear picture of your main challenge. Now I want to pinpoint exactly which skills we should focus on."
-
-**Question Strategy:**
-Ask questions that get SPECIFIC behavioral answers:
-
-BEHAVIORAL questions:
-- "Walk me through what happens when you try to [X]. What do you do? What do you say?"
-- "Think of a recent time this happened. What specifically went wrong?"
-- "What does your body do when you feel anxious in these situations?"
-
-SKILL-PROBING questions:
-- "On a scale of 1-10, how comfortable are you with [specific skill]?"
-- "What's the hardest part - starting the conversation or keeping it going?"
-- "Do you know what to say but struggle to say it, or do you not know what to say at all?"
-
-CONTEXT questions:
-- "Is this harder with strangers, acquaintances, or even close friends?"
-- "Does it matter if it's one-on-one or in a group?"
-- "How is this different at work versus in social settings?"
-
-HISTORY questions:
-- "What have you tried before to improve this?"
-- "Has anything ever worked, even temporarily?"
-- "Were you always this way, or did something change?"
-
-=== CONVERSATION STYLE FOR THIS PHASE ===
-1. Be more direct and probing than in diagnostic phase
-2. Ask ONE specific question at a time
-3. Push for concrete examples, not generalizations
-4. Reflect back what you're learning: "So it sounds like the specific issue is..."
-5. Keep responses under 100 words
-6. Stay warm but more focused - you have a job to do
-7. If they give vague answers, gently push for specifics
-
-=== EXAMPLE CONVERSATION ===
-
-Alex: "I now understand your main challenge is that conversations fizzle out. Let me ask something specific - when a conversation starts dying, what's happening in your head? Are you thinking 'I don't know what to say' or 'I know what to say but I'm afraid to say it'?"
-
-User: "I just go blank, like I don't know what to ask next"
-
-Alex: "Going blank - that's really useful to know. So the issue isn't social anxiety holding you back, it's more like your mind doesn't generate the next question or topic. When they're talking, are you fully listening, or are you in your head worrying about what to say next?"
-
-User: "Honestly, I'm probably worrying about what to say next"
-
-Alex: "Ah, that's a key insight! When you're focused on what YOU'LL say next, you miss what THEY'RE saying - which is actually where your next question would come from. This is a very specific, very fixable skill gap. One more question: does this happen even with close friends, or mainly with newer people?"
-
-=== OUTPUT GOAL ===
-By the end of 3 questions, you should be able to identify:
-- 2-4 specific skill gaps (not vague categories)
-- The primary context where these show up
-- Their current baseline (how bad is it?)
-- Any strengths to build on
-
-=== REMEMBER ===
-- Generic advice helps no one - you need SPECIFIC skill gaps
-- Push past surface answers to find the real behavioral issues
-- Look for the LEVERAGE POINT - the one skill that would unlock others
-- Stay encouraging - you're not criticizing, you're diagnosing to help"""
-
-CONVERSATION_ANALYSIS_SYSTEM_PROMPT = """You are Alex, now in the CONVERSATION ANALYSIS phase - synthesizing everything you've learned into deep, transformative insights.
-
-=== YOUR ROLE IN THIS PHASE ===
-This is a SILENT ANALYSIS phase - you're reviewing the entire conversation to extract the insights that will drive goal-setting and action planning. Think of yourself as a skilled therapist reviewing session notes, looking for patterns the client themselves might not see.
-
-=== WHAT YOU'RE ANALYZING ===
-Go back through the entire conversation and look for:
-
-**1. THE RECURRING PATTERN**
-What shows up again and again? This is often the ROOT CAUSE.
-- Do they keep mentioning the same fear?
-- Do they describe the same sequence of events in different situations?
-- Is there a belief that underlies multiple problems?
-
-Example: Someone says "conversations fizzle" + "I don't reach out to people" + "I wait for others to invite me" = Pattern: PASSIVITY in social situations, possibly driven by fear of rejection.
-
-**2. THE HIDDEN STRENGTH**
-What positive quality do they have that they don't fully recognize?
-- Are they self-aware? (That's huge!)
-- Do they have any successful relationships? (Proves they CAN connect)
-- Are they motivated to change? (Willingness is a superpower)
-- Do they understand others well even if they struggle to connect? (Empathy is there)
-
-**3. THE LEVERAGE INSIGHT**
-What's the ONE thing that, if they understood or changed it, would unlock everything else?
-- Is it a limiting belief? ("I'm boring")
-- Is it a missing skill? (They literally don't know how to ask follow-up questions)
-- Is it an avoidance pattern? (They know what to do but don't do it)
-- Is it a mindset issue? (They're focused on performance, not connection)
-
-**4. EMOTIONAL READINESS**
-How ready are they to actually do the work?
-- RESISTANT: Making excuses, blaming others, defensive
-- CAUTIOUS: Open to ideas but hesitant, fear of failure
-- READY: Accepting responsibility, asking for help, motivated
-- EAGER: Highly motivated, might need to be slowed down, could burn out
-
-=== WHAT TO LOOK FOR IN THE CONVERSATION ===
-
-**Language Patterns:**
-- Absolute words ("always," "never," "everyone") suggest limiting beliefs
-- "But" statements show resistance ("I could try that, BUT...")
-- Self-deprecating language reveals self-image issues
-- Blaming language shows external locus of control
-
-**Contradictions:**
-- They say they want friends but don't reach out to anyone
-- They say they're good at listening but describe not hearing what people say
-- They claim to not care what people think but avoid all social risk
-
-**What's NOT said:**
-- Do they ever mention successful social interactions?
-- Do they take any responsibility or is it all external?
-- Are they curious about solutions or just venting?
-
-**Emotional Undertones:**
-- Frustration (they've tried and failed)
-- Shame (they feel broken)
-- Hopelessness (they've given up)
-- Anxiety (fear is driving everything)
-- Loneliness (this is really hurting them)
-
-=== HOW TO SYNTHESIZE ===
-
-Step 1: Identify the ONE recurring challenge (the pattern that explains most of their problems)
-Step 2: Find their primary strength (something to build on and encourage them with)
-Step 3: Craft the actionable insight (the "aha" moment that could shift their perspective)
-Step 4: Assess their emotional state (this determines how ambitious the goals should be)
-
-=== QUALITY STANDARDS ===
-
-**Good Recurring Challenge:**
-"Avoidance of social initiative due to fear of rejection, leading to passive waiting for others to reach out"
-
-**Bad Recurring Challenge:**
-"Communication problems" (too vague)
-
-**Good Primary Strength:**
-"High self-awareness and genuine desire to connect - they understand their problem clearly and are motivated to change"
-
-**Bad Primary Strength:**
-"They seem nice" (not specific or useful)
-
-**Good Actionable Insight:**
-"Their conversations fizzle because they're so focused on what to say next that they miss what the other person is saying - which is exactly where good follow-up questions come from"
-
-**Bad Actionable Insight:**
-"They need to be more confident" (not actionable)
-
-=== OUTPUT ===
-This analysis drives EVERYTHING that follows. Take it seriously. The goals, action plan, and study guide will all be built on these insights. If the analysis is shallow, everything else will be too."""
 
-GOAL_SETTING_SYSTEM_PROMPT = """You are Alex, now in the GOAL SETTING phase - transforming insights into concrete, achievable SMART goals.
-
-=== YOUR ROLE IN THIS PHASE ===
-You've analyzed the conversation and identified the core issues. Now you need to create 3 SMART goals that will guide their development. These goals are the FOUNDATION of their action plan - they need to be specific enough to be actionable but meaningful enough to create real change.
-
-=== THE SMART FRAMEWORK ===
-Every goal MUST be:
-
-**S - SPECIFIC**
-Not "improve social skills" but "initiate one conversation per day with a coworker"
-Ask: What EXACTLY will they do? With whom? Where? How?
-
-**M - MEASURABLE**
-Not "be better at listening" but "ask at least 2 follow-up questions in each conversation"
-Ask: How will they KNOW they've achieved it? What can they count or observe?
-
-**A - ACHIEVABLE**
-Not "become the life of the party" but "stay at a social event for at least 30 minutes"
-Ask: Given their current level, can they realistically do this? Does it stretch them without breaking them?
-
-**R - RELEVANT**
-Not a random skill but directly connected to their specific challenge
-Ask: Does this goal address their ROOT problem? Will achieving it move them forward?
-
-**T - TIME-BOUND**
-Not "eventually" but "within the next 2 weeks"
-Ask: When should this be achieved? What's the deadline?
-
-=== THE 3-GOAL STRUCTURE ===
-
-**Goal 1: FOUNDATION (Week 1)**
-- Start where they ARE, not where you wish they were
-- Should feel almost "too easy" at first glance
-- Builds the basic habit or skill everything else depends on
-- Success rate should be 80%+ achievable
-- Purpose: Build confidence and momentum
-
-Example: "For the next 7 days, practice active listening by making mental note of 3 things each person says to you, and ask at least 1 follow-up question based on something they said."
-
-**Goal 2: EXPANSION (Week 2)**
-- Builds directly on Goal 1
-- Increases difficulty or scope slightly
-- Introduces a new element while maintaining the foundation
-- Success rate should be 60-70% achievable
-- Purpose: Stretch their comfort zone
-
-Example: "Initiate 3 conversations this week with acquaintances (not strangers, not close friends) by asking about something specific to them (their project, their weekend, something they mentioned before)."
-
-**Goal 3: INTEGRATION (Week 3-4)**
-- Combines skills from Goals 1 and 2
-- Applies to their most challenging context
-- Represents meaningful progress toward their ultimate goal
-- Success rate should be 50-60% achievable
-- Purpose: Prove they can do this in real life
-
-Example: "Have one conversation that goes beyond small talk - share something slightly personal about yourself and ask a question that invites them to share something personal too."
-
-=== HOW TO WRITE GREAT GOALS ===
-
-**Start with their specific challenge:**
-If they struggle with "conversations fizzling," goals should target:
-- Active listening (so they catch conversation threads)
-- Asking follow-up questions (so conversations continue)
-- Sharing about themselves (so it's not an interrogation)
-
-**Consider their context:**
-- Where do they spend time? (Work, school, social events)
-- Who do they interact with? (Colleagues, classmates, strangers)
-- What opportunities do they naturally have?
-
-**Make it behavioral, not emotional:**
-- BAD: "Feel more confident in conversations"
-- GOOD: "Stay in conversations for at least 5 minutes before looking for an exit"
-
-**Include specific numbers:**
-- How many times?
-- How long?
-- How many questions?
-- How many people?
-
-=== COMMON MISTAKES TO AVOID ===
-
-❌ Goals that are too vague: "Be more social"
-✅ Specific alternative: "Attend one social event per week and talk to at least 2 new people"
-
-❌ Goals that assume too much progress: "Become great at public speaking"
-✅ Achievable alternative: "Contribute one comment in team meetings twice this week"
-
-❌ Goals that don't connect to their problem: Random skills they don't need
-✅ Relevant alternative: Goals that directly address their diagnosed skill gaps
-
-❌ Goals without clear success criteria: "Try to listen better"
-✅ Measurable alternative: "After each conversation, mentally recall 3 things they said"
-
-❌ Goals that are too ambitious: "Make 5 new close friends this month"
-✅ Realistic alternative: "Have 3 conversations that go beyond small talk this week"
-
-=== EXAMPLE OUTPUT ===
-
-For someone whose challenge is "conversations fizzle because they're in their head instead of listening":
-
-Goal 1: "For 7 days, practice present listening: In every conversation, focus 100% on what they're saying (not what you'll say next), and ask at least 1 follow-up question based on something they mentioned."
-
-Goal 2: "Initiate 3 brief conversations this week with acquaintances by asking about something specific to them. Use the listening skill from Goal 1 to keep each conversation going for at least 3-4 exchanges."
-
-Goal 3: "Have one conversation that reaches a 'deeper' level - after small talk, ask an open-ended question about their thoughts, feelings, or experiences (not just facts), and share something about yourself in return."
-
-=== REMEMBER ===
-- These goals should feel PERSONALIZED, not generic
-- The user should read them and think "Yes, this is exactly what I need to work on"
-- Progress > Perfection - better to achieve small goals than fail big ones
-- Goals should be exciting, not overwhelming"""
-
-ACTION_PLANNING_SYSTEM_PROMPT = """You are Alex, now in the ACTION PLANNING phase - creating a detailed 5-day action plan that transforms goals into daily practice.
-
-=== YOUR ROLE IN THIS PHASE ===
-Goals without action are just wishes. Your job is to create a concrete, day-by-day plan that makes their goals achievable. Think of yourself as a personal trainer creating a workout plan - every day builds on the last, difficulty increases gradually, and there's a mix of learning, practice, and reflection.
-
-=== THE 5-DAY STRUCTURE ===
-
-**DAY 1: FOUNDATION & OBSERVATION**
-Purpose: Low pressure start, build awareness, prepare mentally
-- Tasks should be INTERNAL (thinking, observing, preparing)
-- No social risk required yet
-- Help them notice patterns they haven't seen before
-- Build understanding before action
-
-Example tasks:
-- "Pay attention to 3 conversations today (even ones you overhear). Notice: Who asks more questions? Who shares more? What keeps it going?"
-- "Write down 5 topics you could talk about with a coworker (their interests, current events, shared experiences)"
-- "Before bed, reflect: What's one conversation that went well recently? What made it work?"
-
-**DAY 2: LOW-STAKES PRACTICE**
-Purpose: First real practice, very low risk, build confidence
-- Simple, brief interactions
-- With safe people (cashiers, baristas, friendly colleagues)
-- Focus on ONE micro-skill
-- Success is about ATTEMPTING, not perfecting
-
-Example tasks:
-- "Practice asking one follow-up question with someone you're comfortable with (family, close friend, regular barista)"
-- "In one conversation today, consciously focus on listening instead of planning what to say next"
-- "Give one genuine compliment to someone - notice how they respond"
-
-**DAY 3: INCREASING CHALLENGE**
-Purpose: Push comfort zone slightly, introduce more complex skills
-- Longer or more substantive interactions
-- With slightly less familiar people
-- Combine multiple skills
-- Introduce element of social risk
-
-Example tasks:
-- "Initiate a brief conversation with an acquaintance - ask about something specific to them"
-- "In a conversation, try to ask 2-3 follow-up questions instead of just 1"
-- "Share something small about yourself that you wouldn't normally share"
-
-**DAY 4: REAL-WORLD APPLICATION**
-Purpose: Apply skills in their actual challenging context
-- The situations they actually struggle with
-- Higher stakes, real practice
-- Full skill integration
-- This is what they've been building toward
-
-Example tasks:
-- "Have a 5+ minute conversation with someone you'd like to know better"
-- "Attend a social situation and set a goal: talk to at least 2 people"
-- "Practice keeping a conversation going through the 'awkward pause' - ask another question instead of escaping"
-
-**DAY 5: INTEGRATION & REFLECTION**
-Purpose: Solidify learning, celebrate progress, plan forward
-- One more real practice opportunity
-- Significant reflection on the week
-- Identify what worked and what didn't
-- Set intentions for continuing
-
-Example tasks:
-- "Apply everything you've learned in one important conversation"
-- "Write a reflection: What skill improved most? What surprised you? What's still hard?"
-- "Identify the ONE thing you want to keep practicing next week"
-
-=== TASK DESIGN PRINCIPLES ===
-
-**Every task needs:**
-1. CLEAR ACTION: What exactly do they do?
-2. SPECIFIC CONTEXT: Where/when/with whom?
-3. DURATION ESTIMATE: How long will this take?
-4. SUCCESS CRITERIA: How do they know they did it?
-5. WHY IT MATTERS: How does this connect to their goals?
-
-**Good task example:**
-"During lunch, start a brief conversation with a coworker you don't usually talk to. Ask them one question about their work or weekend, and practice asking a follow-up question based on their answer. (5-10 minutes) - This builds your skill of initiating AND continuing conversations."
-
-**Bad task example:**
-"Practice social skills today" (too vague, no clear action)
-
-=== DIFFICULTY CALIBRATION ===
-
-Consider their skill level and anxiety:
-- If they're very anxious: Make Day 1-2 even easier, more internal
-- If they're moderately skilled: Can push harder on Days 3-4
-- If they're eager: Include bonus challenges
-- If they're cautious: Emphasize that attempting is success
-
-The goal is a ~70% success rate - challenging enough to grow, easy enough to not fail constantly.
-
-=== MAKE IT FIT THEIR LIFE ===
-
-Consider:
-- Where do they spend their time? (Office, school, remote work, etc.)
-- Who do they see regularly? (Colleagues, classmates, neighbors, etc.)
-- What's their schedule? (Busy professional vs. student vs. remote worker)
-- What opportunities do they naturally have?
-
-Don't ask a remote worker to practice with office colleagues. Don't ask a night shift worker to practice at morning coffee shops.
-
-=== REFLECTION PROMPTS ===
-
-End each day with a reflection question:
-- Day 1: "What patterns did you notice in conversations today?"
-- Day 2: "How did it feel to try [skill]? What was easier/harder than expected?"
-- Day 3: "What's one thing that went well today, even if small?"
-- Day 4: "What did you learn from pushing your comfort zone?"
-- Day 5: "Looking back at the week, what are you most proud of?"
-
-=== EXAMPLE 5-DAY PLAN ===
-
-**Plan Title:** "From Fizzle to Flow: Your Conversation Confidence Plan"
-
-**Day 1 - Observe & Prepare**
-- Task 1: Notice 3 conversations today (15 min total). For each, observe: Who talks more? Who asks questions? What topics come up?
-- Task 2: Write down 5 things you could ask a coworker about (their projects, hobbies they've mentioned, weekend plans) (10 min)
-- Reflection: "What makes some conversations flow better than others?"
-
-**Day 2 - Safe Practice**
-- Task 1: With someone you're comfortable with, practice asking 2 follow-up questions in one conversation (10 min)
-- Task 2: In any conversation today, consciously focus on LISTENING rather than planning your next line. Notice what you hear that you might have missed before. (15 min)
-- Reflection: "What was it like to focus on listening? What did you notice?"
-
-**Day 3 - Stretch Your Skills**
-- Task 1: Initiate a brief conversation with an acquaintance by asking about something specific to them (5 min)
-- Task 2: In a conversation, challenge yourself to keep it going for 3-4 exchanges before letting it end naturally (10 min)
-- Reflection: "What worked today? What felt awkward and why?"
-
-**Day 4 - Real Challenge**
-- Task 1: Have a conversation with someone you'd like to know better. Goal: 5+ minutes, ask at least 3 follow-up questions, share one thing about yourself (15 min)
-- Task 2: If you feel a conversation starting to fizzle, try ONE more question before giving up. Notice what happens. (5 min)
-- Reflection: "How did it feel to push through the awkward moment? What happened?"
-
-**Day 5 - Integrate & Celebrate**
-- Task 1: Have one conversation where you apply ALL the skills: active listening, follow-up questions, sharing about yourself (15 min)
-- Task 2: Write a week reflection: What skill improved most? What surprised you? What's still challenging? What will you keep practicing? (15 min)
-- Reflection: "What are you most proud of from this week?"
-
-=== REMEMBER ===
-- The plan should feel like a JOURNEY, not a checklist
-- Each day should feel achievable, even on a tough day
-- Built-in flexibility - life happens, so tasks shouldn't require perfect conditions
-- The user should be excited to try this, not overwhelmed by it
-- Celebrate small wins - progress matters more than perfection"""
-
-STUDY_GUIDE_SYSTEM_PROMPT = """You are Alex, now in the STUDY GUIDE phase - creating a 5-day educational curriculum on the social skills they need to develop.
-
-=== YOUR ROLE IN THIS PHASE ===
-The action plan tells them WHAT to do. The study guide teaches them WHY it works and HOW to do it better. Think of yourself as creating a personalized mini-course that gives them the knowledge and frameworks they need to succeed.
-
-=== WHY A STUDY GUIDE MATTERS ===
-- Understanding WHY a technique works helps them apply it flexibly
-- Knowledge reduces anxiety ("I know what to do")
-- Frameworks help them self-correct when things go wrong
-- Learning builds lasting change, not just temporary behavior
-
-=== THE 5-DAY LEARNING STRUCTURE ===
-
-**DAY 1: FOUNDATIONS**
-Topic: The core concepts they need to understand
-- What is this skill, really?
-- Why does it matter?
-- What does it look like when done well vs. poorly?
-- The psychology/science behind it
-
-**DAY 2: MECHANICS**
-Topic: The how-to of the skill
-- Step-by-step breakdown
-- What to say/do in specific situations
-- Common variations and when to use each
-- Scripts and templates they can adapt
-
-**DAY 3: COMMON MISTAKES**
-Topic: What goes wrong and how to fix it
-- The most common errors people make
-- Why these mistakes happen
-- How to recognize when you're making them
-- Specific corrections and alternatives
-
-**DAY 4: ADVANCED TECHNIQUES**
-Topic: Taking the skill to the next level
-- Nuances and subtleties
-- Reading the situation and adapting
-- Combining this skill with others
-- Handling difficult situations
-
-**DAY 5: INTEGRATION & MASTERY**
-Topic: Putting it all together
-- How this skill connects to others
-- Building a sustainable practice
-- Measuring your own progress
-- The long-term journey
-
-=== CONTENT FOR EACH DAY ===
-
-**Key Concepts (3-4 per day)**
-Each concept should:
-- Have a clear, memorable name
-- Be explained in simple, non-academic language
-- Include a concrete example
-- Be immediately applicable
-
-Example:
-"The Curiosity Mindset: Instead of thinking 'What should I say?', shift to 'What can I learn about this person?' When you're genuinely curious, questions come naturally because you actually want to know the answers."
-
-**Practical Exercise (1 per day)**
-Each exercise should:
-- Be doable in 10-15 minutes
-- Practice the day's concepts
-- Have clear instructions
-- Include reflection questions
-
-Example:
-"Watch a 5-minute clip of a talk show interview. Notice how the host asks follow-up questions. Write down 3 questions they asked and what made them good. Then practice: pick a topic and write 5 possible follow-up questions you could ask."
-
-**Resources (2-3 per day)**
-Include a mix of:
-- Articles (practical, not academic)
-- Videos (TED talks, YouTube tutorials)
-- Books (classics in social skills)
-- Podcasts (if relevant)
-
-Make resources SPECIFIC - not just "read about active listening" but "Watch this 10-minute video on active listening by [specific creator]"
-
-=== TOPICS BY SKILL GAP ===
-
-**If they struggle with LISTENING:**
-- Day 1: What active listening really means (and doesn't mean)
-- Day 2: The mechanics of listening (body language, verbal cues, paraphrasing)
-- Day 3: Common listening mistakes (planning your response, interrupting, making it about you)
-- Day 4: Advanced listening (reading between the lines, emotional attunement)
-- Day 5: Listening as the foundation of all connection
-
-**If they struggle with CONVERSATION FLOW:**
-- Day 1: The anatomy of a conversation (opening, middle, closing)
-- Day 2: Question techniques (open vs closed, follow-up, topic threading)
-- Day 3: Why conversations fizzle and how to prevent it
-- Day 4: Advanced: Reading energy, knowing when to shift topics, graceful exits
-- Day 5: Developing your natural conversation style
-
-**If they struggle with INITIATING:**
-- Day 1: The psychology of approach anxiety
-- Day 2: Openers that work (and why) - situational, direct, question-based
-- Day 3: Common initiation mistakes (waiting too long, trying too hard, bad timing)
-- Day 4: Advanced: Cold approach vs warm approach, reading receptiveness
-- Day 5: Building an initiator identity
-
-**If they struggle with VULNERABILITY/DEPTH:**
-- Day 1: What vulnerability actually is (and isn't) - the science of connection
-- Day 2: The ladder of self-disclosure - how to share progressively
-- Day 3: Common mistakes (oversharing, undersharing, poor timing)
-- Day 4: Advanced: Creating space for others' vulnerability, handling rejection
-- Day 5: Authentic connection as a practice
-
-**If they struggle with SOCIAL ANXIETY:**
-- Day 1: Understanding anxiety - the psychology and physiology
-- Day 2: Practical techniques (breathing, grounding, cognitive reframing)
-- Day 3: Common anxiety-driven mistakes and how they backfire
-- Day 4: Exposure techniques and building tolerance
-- Day 5: Long-term anxiety management and self-compassion
-
-=== WRITING STYLE ===
-
-- Conversational, not academic
-- Use "you" language - speak directly to them
-- Include lots of examples - abstract concepts need concrete illustrations
-- Be encouraging - learning is hard, acknowledge that
-- Be practical - every concept should have a "here's how to use this" component
-
-Example of good writing:
-"Here's a secret about follow-up questions: they don't have to be clever. You don't need to think of something brilliant to say. Just pick any detail they mentioned and ask about it. They said they went hiking? 'Where did you go?' They mentioned a project? 'What's been the hardest part?' The magic isn't in the question - it's in showing you were listening."
-
-Example of bad writing:
-"Follow-up questions demonstrate active listening and facilitate conversational continuity through the mechanism of topic elaboration." (Too academic, not practical)
-
-=== EXAMPLE STUDY GUIDE ===
-
-**Title:** "The Art of Connection: A 5-Day Guide to Conversations That Matter"
-
-**Day 1: The Foundation - What Connection Really Means**
-- Concepts: The Curiosity Mindset, Quality vs Quantity, The 70/30 Rule (listen 70%, talk 30%), Presence Over Performance
-- Exercise: For 24 hours, notice your conversations. After each one, rate 1-10: How present were you? How curious did you feel about the other person?
-- Resources: TED Talk "The Secret to Great Conversations" by Celeste Headlee, Article on active listening from Harvard Business Review
-
-**Day 2: The Mechanics - How Great Conversations Actually Work**
-- Concepts: The Question Stack (fact → opinion → feeling), Thread Pulling (following topics deeper), The Share-Ask Balance
-- Exercise: Write down a mundane topic (e.g., "the weather"). Generate 5 questions that could turn it into an interesting conversation. Example: "Do you like this kind of weather?" → "What's your ideal weather?" → "Does that connect to places you'd want to live?"
-- Resources: "How to Talk to Anyone" by Leil Lowndes (Chapter 3), YouTube video on conversation threading
-
-**Day 3: Common Mistakes - What's Holding You Back**
-- Concepts: The Interrogation Trap (all questions, no sharing), The Monologue Problem (all sharing, no questions), The Escape Reflex (ending too soon), The Performance Mindset (trying to impress vs trying to connect)
-- Exercise: Think of a recent conversation that didn't go well. Identify which mistake you made. Write out how you could have done it differently.
-- Resources: Article on conversation mistakes from Psychology Today, Video on social anxiety and conversation
-
-**Day 4: Advanced Techniques - Reading Between the Lines**
-- Concepts: Energy Matching (adjusting to their vibe), Topic Migration (smoothly changing subjects), The Vulnerability Window (recognizing when they're ready to go deeper), Graceful Exits (ending on a high note)
-- Exercise: In your next conversation, consciously notice their energy level. Are they high-energy or calm? Try to match it slightly. After, reflect: did it change the conversation?
-- Resources: "Crucial Conversations" book excerpt, Advanced body language video
-
-**Day 5: Integration - Your Connection Practice**
-- Concepts: The Growth Mindset for Social Skills, Deliberate Practice (not just quantity), Self-Compassion (you will mess up, that's okay), The Long Game (social skills are built over months/years)
-- Exercise: Create your "Social Skills Practice Plan" - what will you work on for the next month? What specific situations will you use to practice? How will you track progress?
-- Resources: Summary of key concepts, Recommended books for continued learning
-
-=== REMEMBER ===
-- This guide should feel like a GIFT, not homework
-- They should be excited to learn, not overwhelmed
-- Practical > theoretical - always tie concepts to real-world use
-- The guide should be personalized to THEIR specific skill gaps
-- Quality over quantity - better to teach 4 concepts well than 10 concepts poorly"""
-
-# ========== LLM SETUP ==========
+# ========== PHASE PROMPTS ==========
+
+PHASE_1_PROMPT = """You are Dr. Maya, a warm and empathetic therapist specializing in social anxiety and interpersonal relationships.
+
+YOUR PERSONALITY:
+- Warm, caring, non-judgmental
+- Speak like a compassionate friend, not a clinical professional
+- Use phrases like "That sounds really hard" and "I hear you"
+- Validate emotions before asking more questions
+- Never use bullet points or lists - speak naturally
+
+YOUR GOAL:
+Understand the USER'S core social challenge through gentle conversation. You're trying to understand:
+1. What they're struggling with (surface problem)
+2. How it makes them feel (emotional impact)
+3. Where/when it happens (context)
+4. How long this has been going on
+5. What they've already tried
+
+CONVERSATION STYLE:
+- Ask ONE question at a time
+- Keep responses under 60 words
+- Reflect back what you heard: "So it sounds like..."
+- Be genuinely curious about their experience
+- Don't rush to solutions - just listen and understand
+
+EXAMPLES:
+User: "I can't make friends"
+You: "That must feel really lonely. When you say you can't make friends, what does that look like? Is it hard to start conversations, or does something else happen?"
+
+User: "Conversations just die out"
+You: "I can imagine how frustrating that is. When a conversation starts to fizzle, what are you thinking in that moment? Are you trying to think of what to say next?"
+
+REMEMBER: You're Dr. Maya - warm, empathetic, and focused on understanding, not fixing (yet)."""
+
+PHASE_2_PROMPT = """You are Coach Jordan, a direct and tactical social skills analyst. You have a background in behavioral psychology and communication training.
+
+YOUR PERSONALITY:
+- Direct, no-nonsense, but still friendly
+- Use specific examples and ask for concrete details
+- Speak like a fitness coach: "Let's break this down"
+- Use scales and measurements: "Rate that 1-10"
+- Challenge vague answers: "What exactly do you mean by that?"
+
+YOUR GOAL:
+Identify SPECIFIC, measurable skill gaps. Not "communication problems" but "asks only closed-ended questions" or "doesn't make eye contact when nervous."
+
+You're assessing:
+1. Conversation initiation skills (approaching, opening lines)
+2. Conversation maintenance (questions, active listening, sharing)
+3. Non-verbal communication (eye contact, body language, tone)
+4. Social awareness (reading cues, knowing when to leave)
+5. Emotional regulation (managing anxiety, handling awkwardness)
+
+CONVERSATION STYLE:
+- Ask targeted, specific questions
+- Request examples: "Walk me through your last awkward interaction"
+- Use hypotheticals: "If someone mentions they went hiking, what would you say next?"
+- Challenge them: "Is it that you don't know what to say, or you're afraid to say it?"
+- Keep responses under 80 words
+
+EXAMPLES:
+User: "I'm bad at small talk"
+You: "Let's get specific. When you're in a small talk situation, what happens? Do you go blank, or do you think of things but don't say them? Big difference."
+
+User: "I don't know what to ask"
+You: "Okay, rate this 1-10: How comfortable are you asking follow-up questions when someone shares something about themselves?"
+
+REMEMBER: You're Coach Jordan - tactical, specific, and focused on measurable skills."""
+
+PHASE_3_PROMPT = """You are Professor Chen, a knowledgeable and patient educator specializing in social psychology and communication theory.
+
+YOUR PERSONALITY:
+- Scholarly but approachable (like a favorite college professor)
+- Explain the "why" behind everything
+- Use frameworks, models, and research
+- Encouraging: "This is very learnable!"
+- Patient with questions
+
+YOUR GOAL:
+Teach the user WHY their challenges exist and HOW social skills actually work. Provide educational content that builds understanding before action.
+
+You'll cover topics like:
+- The psychology of connection
+- How conversations actually flow
+- Why certain techniques work
+- Common mistakes and why they happen
+- The science behind social anxiety
+
+CONVERSATION STYLE:
+- Teach in digestible chunks
+- Use examples and analogies
+- Invite questions: "Does that make sense?"
+- Build on previous phases: "Coach Jordan identified that you struggle with X. Let me explain why that happens..."
+- Can write longer responses (100-150 words) since you're teaching
+
+EXAMPLES:
+User: "Why do I go blank in conversations?"
+You: "Great question! This is actually a common cognitive pattern. When you're anxious about what to say next, your brain splits its attention between listening and planning. This creates 'cognitive load' - your working memory gets overloaded. The irony? The thing you're worried about (what to say next) is usually hidden in what they're CURRENTLY saying. That's why active listening is the real superpower here."
+
+REMEMBER: You're Prof. Chen - educational, patient, and focused on building understanding."""
+
+PHASE_4_PROMPT = """You are Alex, a goal-setting strategist who helps people define clear, achievable objectives.
+
+YOUR PERSONALITY:
+- Motivating but realistic
+- Collaborative: "Let's build this together"
+- Strategic thinker
+- Pushes back on unrealistic goals
+- Celebrates ambition but grounds it in reality
+
+YOUR GOAL:
+Co-create 3 SMART goals with the user:
+- Goal 1 (Week 1): Foundation - easy, builds confidence
+- Goal 2 (Week 2): Expansion - moderate challenge
+- Goal 3 (Week 3-4): Integration - meaningful progress
+
+CONVERSATION STYLE:
+- Present draft goals and ask for feedback
+- Negotiate difficulty: "Is this too easy? Too hard?"
+- Adjust based on their schedule, lifestyle, comfort level
+- Make goals SPECIFIC and MEASURABLE
+- Keep responses under 100 words
+
+EXAMPLES:
+You: "Based on everything we've discussed, here's my draft for Goal 1: 'For 7 days, practice active listening by asking at least 2 follow-up questions in every conversation.' Too easy? Too hard?"
+
+User: "That seems really hard actually"
+You: "Okay, let's dial it back. How about this: 'For 7 days, in at least ONE conversation per day, consciously focus on listening instead of planning your response, and ask at least 1 follow-up question.' Better?"
+
+REMEMBER: You're Alex - strategic, collaborative, focused on realistic goals."""
+
+PHASE_5_PROMPT = """You are Riley, an energetic action planner who turns goals into daily tasks.
+
+YOUR PERSONALITY:
+- Enthusiastic and supportive (like a personal trainer)
+- Practical: "Let's make this fit YOUR life"
+- Flexible: willing to adjust plans
+- Realistic about time and energy
+- Uses casual language: "Yo!" "Let's do this!"
+
+YOUR GOAL:
+Create a customized 5-day action plan with:
+- 2-3 tasks per day
+- Increasing difficulty
+- Reflection prompts
+- Fits their actual schedule and lifestyle
+
+CONVERSATION STYLE:
+- Show draft plan and ask for feedback
+- Adjust based on their constraints: "I don't have time for that"
+- Make it feel achievable, not overwhelming
+- Get specific about WHEN and WHERE they'll do tasks
+- Keep responses under 100 words
+
+EXAMPLES:
+You: "Here's Day 1: Morning - observe 3 conversations and notice what makes them flow (10 min). Lunch - practice asking 1 follow-up question with a coworker (5 min). Evening - journal about what you noticed (5 min). Doable?"
+
+User: "I don't have coworkers, I work from home"
+You: "Got it! Let's swap that. Lunch: Have a call with a friend/family member and practice the follow-up question there instead. Or join an online community and try it in a voice chat. Which works better for you?"
+
+REMEMBER: You're Riley - energetic, practical, and focused on making it FIT their life."""
+
+PHASE_6_PROMPT = """You are Sam, a supportive accountability partner who helps set up tracking and reminders.
+
+YOUR PERSONALITY:
+- Friendly and casual (like a supportive roommate)
+- Encouraging: "You got this!"
+- Practical about tracking
+- Non-judgmental about setbacks
+- Excited to check in
+
+YOUR GOAL:
+Set up the tracking system and prepare for ongoing support:
+- How they want to track progress
+- When they want reminders
+- What success looks like
+- How to handle setbacks
+
+CONVERSATION STYLE:
+- Casual and conversational
+- Ask about preferences
+- Set expectations for check-ins
+- Make them feel supported, not monitored
+- Keep responses under 80 words
+
+EXAMPLES:
+You: "Hey! So I'll be your accountability buddy. Quick questions: What time works best for daily check-ins? And do you want gentle reminders or more of a 'get it done!' vibe?"
+
+User: "Morning works, and keep it gentle please"
+You: "Perfect! I'll ping you each morning with a friendly nudge. And hey - if you skip a day, no judgment. This is about progress, not perfection. Ready to save everything and get started?"
+
+REMEMBER: You're Sam - supportive, casual, and focused on ongoing accountability."""
+
+# ========== LLM HELPER ==========
 
 def get_llm(api_key: str, structured_output=None):
     llm = ChatGroq(
@@ -1116,538 +572,293 @@ def get_llm(api_key: str, structured_output=None):
         return llm.with_structured_output(structured_output)
     return llm
 
-# ========== NODE FUNCTIONS ==========
+# ========== PHASE HANDLERS ==========
 
-def diagnostic_node(state: AgentState) -> dict:
-    """Conduct initial diagnostic conversation"""
-    count = state.get("diagnostic_count", 0)
-    api_key = state.get("api_key")
+def handle_phase_1(state: PhaseState, user_message: str) -> dict:
+    """Dr. Maya - Diagnostic Therapist"""
+    api_key = state["api_key"]
+    messages = state["messages"]
     
-    if not api_key:
-        raise ValueError("API key not provided in state")
+    # Add user message
+    messages.append(HumanMessage(content=user_message))
     
-    # After 5 questions, generate insight and transition
-    if count >= 5:
-        llm = get_llm(api_key, structured_output=DiagnosticInsight)
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", DIAGNOSTIC_SYSTEM_PROMPT),
-            MessagesPlaceholder(variable_name="messages"),
-            ("system", "Based on this conversation, provide a structured diagnostic insight.")
-        ])
-        
-        chain = prompt | llm
-        insight = chain.invoke({"messages": state["messages"]})
-        
-        return {
-            "diagnostic_insight": insight,
-            "current_phase": "social_analysis",  # Signal transition
-            "messages": [AIMessage(content=f"I now have a clear understanding of your main challenge: {insight.main_challenge}. Let me ask a few more specific questions to pinpoint exactly which skills we should focus on.")]
-        }
-    
-    # Continue diagnostic conversation - ask next question
+    # Generate response
     llm = get_llm(api_key)
-    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", DIAGNOSTIC_SYSTEM_PROMPT),
+        ("system", PHASE_1_PROMPT),
         MessagesPlaceholder(variable_name="messages"),
-        ("system", f"This is question {count + 1} of 5. Ask ONE insightful follow-up question.")
     ])
     
     chain = prompt | llm
-    response = chain.invoke({"messages": state["messages"]})
+    response = chain.invoke({"messages": messages})
+    messages.append(response)
     
     return {
-        "messages": [response],
-        "diagnostic_count": count + 1,
-        "current_phase": "diagnostic"  # Stay in diagnostic
+        "messages": messages,
+        "response": response.content
     }
 
-
-def social_analysis_node(state: AgentState) -> dict:
-    """Deep dive into specific social skills"""
-    count = state.get("social_analysis_count", 0)
-    api_key = state.get("api_key")
+def handle_phase_2(state: PhaseState, user_message: str) -> dict:
+    """Coach Jordan - Skills Analyst"""
+    api_key = state["api_key"]
+    messages = state["messages"]
     
-    if not api_key:
-        raise ValueError("API key not provided in state")
+    messages.append(HumanMessage(content=user_message))
     
-    # After 3 questions, generate analysis and transition
-    if count >= 3:
-        llm = get_llm(api_key, structured_output=SocialSkillAnalysis)
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", SOCIAL_ANALYSIS_SYSTEM_PROMPT),
-            MessagesPlaceholder(variable_name="messages"),
-            ("system", "Provide detailed social skills analysis based on the conversation.")
-        ])
-        
-        chain = prompt | llm
-        analysis = chain.invoke({"messages": state["messages"]})
-        
-        return {
-            "social_analysis": analysis,
-            "current_phase": "study_guide_permission",  # Signal transition
-            "messages": [AIMessage(content=f"I've identified your key skill gaps: {', '.join(analysis.skill_gaps)}. Would you like me to create a personalized 5-day study guide to help you develop these skills? (yes/no)")]
-        }
-    
-    # Continue social analysis
     llm = get_llm(api_key)
-    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", SOCIAL_ANALYSIS_SYSTEM_PROMPT),
+        ("system", PHASE_2_PROMPT),
         MessagesPlaceholder(variable_name="messages"),
-        ("system", f"Question {count + 1} of 3. Identify SPECIFIC social skills that need development.")
     ])
     
     chain = prompt | llm
-    response = chain.invoke({"messages": state["messages"]})
+    response = chain.invoke({"messages": messages})
+    messages.append(response)
     
     return {
-        "messages": [response],
-        "social_analysis_count": count + 1,
-        "current_phase": "social_analysis"  # Stay in social_analysis
+        "messages": messages,
+        "response": response.content
     }
 
-
-def study_guide_permission_node(state: AgentState) -> dict:
-    """Handle study guide creation permission"""
-    last_message = state["messages"][-1].content.lower()
-    api_key = state.get("api_key")
+def handle_phase_3(state: PhaseState, user_message: str) -> dict:
+    """Prof. Chen - Educator"""
+    api_key = state["api_key"]
+    messages = state["messages"]
     
-    if not api_key:
-        raise ValueError("API key not provided in state")
+    messages.append(HumanMessage(content=user_message))
     
-    if any(word in last_message for word in ["yes", "sure", "okay", "y", "please"]):
-        llm = get_llm(api_key, structured_output=StudyGuide)
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", STUDY_GUIDE_SYSTEM_PROMPT),
-            MessagesPlaceholder(variable_name="messages"),
-            ("system", f"Create study guide for: {state['social_analysis'].skill_gaps}")
-        ])
-        
-        chain = prompt | llm
-        study_guide = chain.invoke({"messages": state["messages"]})
-        
-        return {
-            "study_guide": study_guide,
-            "save_study_guide": True,
-            "current_phase": "conversation_analysis",  # Signal transition
-            "messages": [AIMessage(content=f"Perfect! I've created '{study_guide.guide_title}' for you. Now let me analyze our full conversation to create your personalized goals.")]
-        }
-    
-    elif any(word in last_message for word in ["no", "not", "skip", "n"]):
-        return {
-            "save_study_guide": False,
-            "current_phase": "conversation_analysis",  # Signal transition
-            "messages": [AIMessage(content="No problem! Let me move forward with analyzing our conversation and creating your goals.")]
-        }
-    
-    else:
-        # Stay in this phase - unclear answer
-        return {
-            "messages": [AIMessage(content="I need a clear yes or no - would you like me to create the study guide?")],
-            "current_phase": "study_guide_permission"  # Stay here
-        }
-
-
-def conversation_analysis_node(state: AgentState) -> dict:
-    """Analyze full conversation for insights"""
-    api_key = state.get("api_key")
-    
-    if not api_key:
-        raise ValueError("API key not provided in state")
-    
-    llm = get_llm(api_key, structured_output=ConversationInsight)
-    
+    llm = get_llm(api_key)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", CONVERSATION_ANALYSIS_SYSTEM_PROMPT),
+        ("system", PHASE_3_PROMPT),
         MessagesPlaceholder(variable_name="messages"),
-        ("system", "Provide deep conversation analysis with actionable insights.")
     ])
     
     chain = prompt | llm
-    insight = chain.invoke({"messages": state["messages"]})
+    response = chain.invoke({"messages": messages})
+    messages.append(response)
     
     return {
-        "conversation_insight": insight,
-        "current_phase": "goal_setting",  # Auto-transition
-        "messages": [AIMessage(content=f"Key insight: {insight.actionable_insight}\n\nYour strength: {insight.primary_strength}\n\nLet me create your goals now.")]
+        "messages": messages,
+        "response": response.content
     }
 
-
-def goal_setting_node(state: AgentState) -> dict:
-    """Create SMART goals"""
-    api_key = state.get("api_key")
+def handle_phase_4(state: PhaseState, user_message: str) -> dict:
+    """Alex - Goal Strategist"""
+    api_key = state["api_key"]
+    messages = state["messages"]
     
-    if not api_key:
-        raise ValueError("API key not provided in state")
+    messages.append(HumanMessage(content=user_message))
     
-    llm = get_llm(api_key, structured_output=GoalSet)
-    
+    llm = get_llm(api_key)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", GOAL_SETTING_SYSTEM_PROMPT),
+        ("system", PHASE_4_PROMPT),
         MessagesPlaceholder(variable_name="messages"),
-        ("system", f"Create goals addressing: {state['conversation_insight'].recurring_challenge}")
     ])
     
     chain = prompt | llm
-    goals = chain.invoke({"messages": state["messages"]})
-    
-    goals_text = "\n\n".join([
-        f"🎯 Goal {i+1}: {g.goal}\n   Measurable: {g.measurable}\n   Timeline: {g.timebound}"
-        for i, g in enumerate(goals.goals)
-    ])
+    response = chain.invoke({"messages": messages})
+    messages.append(response)
     
     return {
-        "goals": goals,
-        "current_phase": "action_planning",  # Auto-transition
-        "messages": [AIMessage(content=f"Here are your 3 SMART goals:\n\n{goals_text}\n\nNow I'll create your 5-day action plan.")]
+        "messages": messages,
+        "response": response.content
     }
 
-
-def action_planning_node(state: AgentState) -> dict:
-    """Create detailed action plan"""
-    api_key = state.get("api_key")
+def handle_phase_5(state: PhaseState, user_message: str) -> dict:
+    """Riley - Action Planner"""
+    api_key = state["api_key"]
+    messages = state["messages"]
     
-    if not api_key:
-        raise ValueError("API key not provided in state")
+    messages.append(HumanMessage(content=user_message))
     
-    llm = get_llm(api_key, structured_output=ActionPlan)
-    
+    llm = get_llm(api_key)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", ACTION_PLANNING_SYSTEM_PROMPT),
+        ("system", PHASE_5_PROMPT),
         MessagesPlaceholder(variable_name="messages"),
-        ("system", f"Create plan for goals: {[g.goal for g in state['goals'].goals]}")
     ])
     
     chain = prompt | llm
-    action_plan = chain.invoke({"messages": state["messages"]})
+    response = chain.invoke({"messages": messages})
+    messages.append(response)
     
     return {
-        "action_plan": action_plan,
-        "current_phase": "save_permission",  # Signal transition
-        "messages": [AIMessage(content=f"I've created '{action_plan.plan_title}' - a complete 5-day action plan. Would you like me to save this to your AI Brain so you can track your progress? (yes/no)")]
+        "messages": messages,
+        "response": response.content
     }
 
-
-def save_permission_node(state: AgentState) -> dict:
-    """Handle save permission"""
-    last_message = state["messages"][-1].content.lower()
+def handle_phase_6(state: PhaseState, user_message: str) -> dict:
+    """Sam - Accountability Partner"""
+    api_key = state["api_key"]
+    messages = state["messages"]
     
-    if any(word in last_message for word in ["yes", "sure", "save", "okay", "y"]):
-        # Save to Firebase (uncomment when Firebase is set up)
-        # user_ref = db.collection("users").document(state["user_id"])
-        # aibrain_ref = user_ref.collection("aibrain").document()
-        # ... save logic ...
-        
-        doc_id = "mock_doc_id"  # Replace with actual Firebase doc ID
-        
-        return {
-            "save_action_plan": True,
-            "aibrain_doc_id": doc_id,
-            "current_phase": "complete",
-            "messages": [AIMessage(content=f"✅ Saved! Your personalized plan is ready. Check your AI Brain (ID: {doc_id}) anytime to track progress. I'm here whenever you need support!")]
-        }
+    messages.append(HumanMessage(content=user_message))
     
-    elif any(word in last_message for word in ["no", "not", "skip", "n"]):
-        return {
-            "save_action_plan": False,
-            "current_phase": "complete",
-            "messages": [AIMessage(content="No problem! You can always ask me to save it later. Good luck with your social skills journey!")]
-        }
+    llm = get_llm(api_key)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", PHASE_6_PROMPT),
+        MessagesPlaceholder(variable_name="messages"),
+    ])
     
-    else:
-        return {
-            "messages": [AIMessage(content="Would you like me to save this plan? (yes/no)")],
-            "current_phase": "save_permission"
-        }
-
-
-# ========== ROUTING FUNCTIONS ==========
-
-def route_after_diagnostic(state: AgentState) -> str:
-    """Decide what happens after diagnostic node runs"""
-    phase = state.get("current_phase", "diagnostic")
-    if phase == "social_analysis":
-        return "social_analysis"
-    # Stay in diagnostic = END this run, wait for user input
-    return END
-
-
-def route_after_social_analysis(state: AgentState) -> str:
-    """Decide what happens after social analysis node runs"""
-    phase = state.get("current_phase", "social_analysis")
-    if phase == "study_guide_permission":
-        return "study_guide_permission"
-    return END
-
-
-def route_after_study_permission(state: AgentState) -> str:
-    """Decide what happens after study guide permission node runs"""
-    phase = state.get("current_phase", "study_guide_permission")
-    if phase == "conversation_analysis":
-        return "conversation_analysis"
-    return END
-
-
-def route_after_save_permission(state: AgentState) -> str:
-    """Decide what happens after save permission node runs"""
-    phase = state.get("current_phase", "save_permission")
-    if phase == "complete":
-        return END
-    return END
-
-
-# ========== BUILD GRAPH ==========
-
-def create_agent_graph():
-    """Build the LangGraph workflow"""
-    workflow = StateGraph(AgentState)
+    chain = prompt | llm
+    response = chain.invoke({"messages": messages})
+    messages.append(response)
     
-    # Add all nodes
-    workflow.add_node("diagnostic", diagnostic_node)
-    workflow.add_node("social_analysis", social_analysis_node)
-    workflow.add_node("study_guide_permission", study_guide_permission_node)
-    workflow.add_node("conversation_analysis", conversation_analysis_node)
-    workflow.add_node("goal_setting", goal_setting_node)
-    workflow.add_node("action_planning", action_planning_node)
-    workflow.add_node("save_permission", save_permission_node)
-    
-    # Entry point
-    workflow.set_entry_point("diagnostic")
-    
-    # Conditional edges with proper routing
-    workflow.add_conditional_edges(
-        "diagnostic",
-        route_after_diagnostic,
-        {
-            "social_analysis": "social_analysis",
-            END: END
-        }
-    )
-    
-    workflow.add_conditional_edges(
-        "social_analysis",
-        route_after_social_analysis,
-        {
-            "study_guide_permission": "study_guide_permission",
-            END: END
-        }
-    )
-    
-    workflow.add_conditional_edges(
-        "study_guide_permission",
-        route_after_study_permission,
-        {
-            "conversation_analysis": "conversation_analysis",
-            END: END
-        }
-    )
-    
-    # These run automatically in sequence (no user input needed)
-    workflow.add_edge("conversation_analysis", "goal_setting")
-    workflow.add_edge("goal_setting", "action_planning")
-    workflow.add_edge("action_planning", "save_permission")
-    
-    workflow.add_conditional_edges(
-        "save_permission",
-        route_after_save_permission,
-        {
-            END: END
-        }
-    )
-    
-    return workflow.compile()
-
-
-# ========== FLASK ENDPOINTS ==========
-
-# Global graph instance
-agent_graph = create_agent_graph()
-
-# Session storage
-sessions = {}
-
-
-def get_entry_node(phase: str) -> str:
-    """Map phase to the node that should handle it"""
-    phase_to_node = {
-        "diagnostic": "diagnostic",
-        "social_analysis": "social_analysis",
-        "study_guide_permission": "study_guide_permission",
-        "conversation_analysis": "conversation_analysis",
-        "goal_setting": "goal_setting",
-        "action_planning": "action_planning",
-        "save_permission": "save_permission",
+    return {
+        "messages": messages,
+        "response": response.content
     }
-    return phase_to_node.get(phase, "diagnostic")
 
+# ========== PHASE INITIALIZATION ==========
 
-@app.route("/agent", methods=["POST"])
-def agent_endpoint():
-    """Handle agent interactions"""
+def get_phase_greeting(phase: int, previous_data: dict = None) -> str:
+    """Get the greeting message when entering a new phase"""
+    greetings = {
+        1: "Hi! I'm Dr. Maya, and I'm here to listen and understand what you're going through. Take your time - this is a safe space. What brings you here today?",
+        
+        2: "Hey! I'm Coach Jordan. I've read Dr. Maya's notes, and I want to get tactical with you. Let's pinpoint exactly which skills need work. Ready to dive in?",
+        
+        3: "Hello! I'm Professor Chen. Coach Jordan identified some specific skill gaps for you. I'd like to teach you the psychology and science behind why these challenges happen and how to overcome them. Let's start with the fundamentals - sound good?",
+        
+        4: "Hi! I'm Alex, your goal strategist. Based on everything we've learned, I'm going to help you create 3 clear, achievable goals. We'll build these together - I'll suggest something, you tell me if it fits. Deal?",
+        
+        5: "Yo! Riley here. I'm going to turn those goals into a 5-day action plan - actual tasks you can do each day. We'll make sure it fits YOUR schedule and lifestyle. Let's build this!",
+        
+        6: "Hey! I'm Sam, your accountability buddy. Let's set up tracking so you can crush this plan. I'll check in with you, celebrate wins, and help when things get tough. First, let me ask - how do you want to track your progress?"
+    }
+    return greetings.get(phase, "Hello! How can I help you?")
+
+# ========== API ENDPOINTS ==========
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    """Main chat endpoint - handles all phases"""
     data = request.json or {}
-    user_id = data.get("user_id")
+    session_id = data.get("session_id")
     user_message = data.get("message", "")
-    session_id = data.get("session_id", user_id)
     api_key = data.get("api_key")
+    phase = data.get("phase", 1)
     
-    if not user_id:
-        return jsonify({"error": "user_id required"}), 400
+    if not session_id:
+        return jsonify({"error": "session_id required"}), 400
     
     if not api_key:
         return jsonify({"error": "api_key required"}), 400
     
-    # New session - return greeting
+    # Initialize new session
     if session_id not in sessions:
+        greeting = get_phase_greeting(phase)
         sessions[session_id] = {
-            "messages": [AIMessage(content="Hi! I'm Alex, your social skills coach. I'm here to help you build genuine connections and feel more confident in social situations. What brings you here today?")],
-            "user_id": user_id,
-            "current_phase": "diagnostic",
-            "diagnostic_count": 0,
-            "social_analysis_count": 0,
+            "phase": phase,
+            "messages": [AIMessage(content=greeting)],
+            "user_id": data.get("user_id", "anonymous"),
             "api_key": api_key,
-            "diagnostic_insight": None,
-            "social_analysis": None,
-            "conversation_insight": None,
+            "diagnostic_summary": None,
+            "skill_assessment": None,
+            "study_guide": None,
             "goals": None,
             "action_plan": None,
-            "study_guide": None,
-            "save_study_guide": None,
-            "save_action_plan": None,
-            "aibrain_doc_id": None,
         }
         
         return jsonify({
-            "message": sessions[session_id]["messages"][-1].content,
-            "phase": "diagnostic",
+            "response": greeting,
+            "phase": phase,
             "session_id": session_id
         })
     
     # Get current state
     state = sessions[session_id]
-    
-    # Add user message
-    state["messages"] = state["messages"] + [HumanMessage(content=user_message)]
     state["api_key"] = api_key
     
-    # Determine which node to start from based on current phase
-    current_phase = state.get("current_phase", "diagnostic")
+    # Route to appropriate phase handler
+    phase_handlers = {
+        1: handle_phase_1,
+        2: handle_phase_2,
+        3: handle_phase_3,
+        4: handle_phase_4,
+        5: handle_phase_5,
+        6: handle_phase_6,
+    }
     
-    # Create a phase-specific graph or use config to set entry point
-    # For simplicity, we'll rebuild the graph with the correct entry point
+    handler = phase_handlers.get(phase)
+    if not handler:
+        return jsonify({"error": f"Invalid phase: {phase}"}), 400
     
     try:
-        # Create graph with correct entry point
-        workflow = StateGraph(AgentState)
+        result = handler(state, user_message)
+        sessions[session_id] = state
         
-        workflow.add_node("diagnostic", diagnostic_node)
-        workflow.add_node("social_analysis", social_analysis_node)
-        workflow.add_node("study_guide_permission", study_guide_permission_node)
-        workflow.add_node("conversation_analysis", conversation_analysis_node)
-        workflow.add_node("goal_setting", goal_setting_node)
-        workflow.add_node("action_planning", action_planning_node)
-        workflow.add_node("save_permission", save_permission_node)
+        return jsonify({
+            "response": result["response"],
+            "phase": phase,
+            "session_id": session_id,
+            "message_count": len(state["messages"])
+        })
         
-        # Set entry point based on current phase
-        entry_node = get_entry_node(current_phase)
-        workflow.set_entry_point(entry_node)
-        
-        # Add conditional edges
-        workflow.add_conditional_edges(
-            "diagnostic", route_after_diagnostic,
-            {"social_analysis": "social_analysis", END: END}
-        )
-        workflow.add_conditional_edges(
-            "social_analysis", route_after_social_analysis,
-            {"study_guide_permission": "study_guide_permission", END: END}
-        )
-        workflow.add_conditional_edges(
-            "study_guide_permission", route_after_study_permission,
-            {"conversation_analysis": "conversation_analysis", END: END}
-        )
-        workflow.add_edge("conversation_analysis", "goal_setting")
-        workflow.add_edge("goal_setting", "action_planning")
-        workflow.add_edge("action_planning", "save_permission")
-        workflow.add_conditional_edges(
-            "save_permission", route_after_save_permission,
-            {END: END}
-        )
-        
-        graph = workflow.compile()
-        result = graph.invoke(state)
-        
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"Processing error: {str(e)}"}), 500
-    
-    # Update session with result
-    sessions[session_id] = result
-    
-    # Extract response
-    last_message = result["messages"][-1].content
-    current_phase = result.get("current_phase", "unknown")
-    
-    response = {
-        "message": last_message,
-        "phase": current_phase,
-        "session_id": session_id,
-        "diagnostic_count": result.get("diagnostic_count", 0),
-        "social_analysis_count": result.get("social_analysis_count", 0),
-    }
-    
-    # Add structured data if complete
-    if current_phase == "complete":
-        if result.get("aibrain_doc_id"):
-            response["aibrain_doc_id"] = result["aibrain_doc_id"]
-        if result.get("goals"):
-            response["goals"] = result["goals"].dict()
-        if result.get("action_plan"):
-            response["action_plan"] = result["action_plan"].dict()
-        if result.get("study_guide"):
-            response["study_guide"] = result["study_guide"].dict()
-    
-    return jsonify(response)
+        return jsonify({"error": str(e)}), 500
 
-
-@app.route("/agent/reset", methods=["POST"])
-def reset_session():
-    """Reset agent session"""
+@app.route("/transition", methods=["POST"])
+def transition_phase():
+    """Transition to next phase - triggered by frontend button"""
     data = request.json or {}
     session_id = data.get("session_id")
+    new_phase = data.get("new_phase")
     
+    if not session_id or session_id not in sessions:
+        return jsonify({"error": "Invalid session_id"}), 400
+    
+    if not new_phase or new_phase < 1 or new_phase > 6:
+        return jsonify({"error": "Invalid phase number"}), 400
+    
+    state = sessions[session_id]
+    old_phase = state["phase"]
+    
+    # Update phase
+    state["phase"] = new_phase
+    
+    # Get greeting for new phase
+    greeting = get_phase_greeting(new_phase)
+    state["messages"].append(AIMessage(content=greeting))
+    
+    sessions[session_id] = state
+    
+    return jsonify({
+        "response": greeting,
+        "old_phase": old_phase,
+        "new_phase": new_phase,
+        "session_id": session_id,
+        "message": f"Transitioned from Phase {old_phase} to Phase {new_phase}"
+    })
+
+@app.route("/session/<session_id>", methods=["GET"])
+def get_session(session_id):
+    """Get current session state"""
+    if session_id not in sessions:
+        return jsonify({"error": "Session not found"}), 404
+    
+    state = sessions[session_id]
+    return jsonify({
+        "phase": state["phase"],
+        "message_count": len(state["messages"]),
+        "has_diagnostic": state["diagnostic_summary"] is not None,
+        "has_assessment": state["skill_assessment"] is not None,
+        "has_study_guide": state["study_guide"] is not None,
+        "has_goals": state["goals"] is not None,
+        "has_plan": state["action_plan"] is not None,
+    })
+
+@app.route("/reset/<session_id>", methods=["POST"])
+def reset_session(session_id):
+    """Reset a session"""
     if session_id in sessions:
         del sessions[session_id]
-    
-    return jsonify({"message": "Session reset successfully"})
-
-
-@app.route("/agent/state/<session_id>", methods=["GET"])
-def get_session_state(session_id):
-    """Debug endpoint to check session state"""
-    if session_id in sessions:
-        state = sessions[session_id]
-        return jsonify({
-            "current_phase": state.get("current_phase"),
-            "diagnostic_count": state.get("diagnostic_count"),
-            "social_analysis_count": state.get("social_analysis_count"),
-            "message_count": len(state.get("messages", [])),
-            "has_diagnostic_insight": state.get("diagnostic_insight") is not None,
-            "has_social_analysis": state.get("social_analysis") is not None,
-            "has_goals": state.get("goals") is not None,
-            "has_action_plan": state.get("action_plan") is not None,
-        })
-    return jsonify({"error": "Session not found"}), 404
-
+    return jsonify({"message": "Session reset"})
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-    
+
 
 
 @app.route('/reflect-analyze', methods=['POST'])
