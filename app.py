@@ -1,26 +1,28 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS, cross_origin
-from openai import OpenAI
-from typing import Dict
+# Standard library
 import os
 import json
+import re
+import time
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, TypedDict, Annotated, Literal
+
+# Third-party
 from dotenv import load_dotenv
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from openai import OpenAI
 from bs4 import BeautifulSoup
+import requests
+
 import firebase_admin
 from firebase_admin import credentials, firestore, initialize_app
-import re
-from datetime import datetime, timedelta
-import time
-import requests
-from firebase_admin import credentials, firestore
-from typing import TypedDict, Annotated, Literal, Optional, List
+
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
 from pydantic import BaseModel, Field
-from datetime import datetime
-import operator
 
 load_dotenv()
 
