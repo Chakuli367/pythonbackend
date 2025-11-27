@@ -320,478 +320,502 @@ def parse_story_analysis(analysis_text):
 
 
 # ========== PYDANTIC MODELS ==========
-# ========== PYDANTIC MODELS ==========
 
 class DiagnosticSummary(BaseModel):
     main_challenge: str = Field(description="The core social skill challenge identified")
     emotional_state: str = Field(description="User's emotional state (anxious, frustrated, hopeful, etc.)")
     context: str = Field(description="Where this challenge shows up most")
     impact: str = Field(description="How this affects their life")
+    backstory: str = Field(description="Brief history - how long, what triggered it")
     
 class SkillGapAssessment(BaseModel):
-    skill_gaps: List[str] = Field(description="3-5 specific skills needing improvement", min_items=3, max_items=5)
-    skill_ratings: dict = Field(description="Skill name -> rating out of 10")
-    primary_weakness: str = Field(description="The #1 skill to focus on")
+    skill_gaps: List[str] = Field(description="3-5 specific skills needing improvement", min_length=3, max_length=5)
+    skill_ratings: Dict[str, int] = Field(description="Skill name -> rating out of 10")
+    primary_weakness: str = Field(description="The #1 skill to focus on first")
     hidden_strength: str = Field(description="One strength they might not recognize")
+    improvement_priority: List[str] = Field(description="Ordered list of skills to work on")
 
 class StudyGuide(BaseModel):
     title: str = Field(description="Study guide title")
-    lessons: List[dict] = Field(description="5 lessons with topics, concepts, exercises")
+    key_concepts: List[str] = Field(description="5 core concepts they need to understand")
+    lessons: List[Dict[str, Any]] = Field(description="3-5 lessons with topic, explanation, exercise")
+    resources: List[str] = Field(description="Additional learning resources")
     
 class GoalSet(BaseModel):
-    goal_1: dict = Field(description="Week 1 foundation goal")
-    goal_2: dict = Field(description="Week 2 expansion goal")
-    goal_3: dict = Field(description="Week 3-4 integration goal")
-    user_feedback: Optional[str] = Field(description="User's thoughts on goals")
+    week_1_goal: Dict[str, Any] = Field(description="Foundation goal with target, metric, timeline")
+    week_2_goal: Dict[str, Any] = Field(description="Expansion goal")
+    week_3_4_goal: Dict[str, Any] = Field(description="Integration goal")
+    success_metrics: List[str] = Field(description="How to measure success")
 
 class ActionPlan(BaseModel):
     plan_title: str = Field(description="Action plan title")
-    days: List[dict] = Field(description="5 days of tasks", min_items=5, max_items=5)
-    customizations: Optional[List[str]] = Field(description="User-requested changes")
+    daily_tasks: List[Dict[str, Any]] = Field(description="5 days of tasks with morning/afternoon/evening")
+    reflection_prompts: List[str] = Field(description="Daily reflection questions")
+    difficulty_level: str = Field(description="easy, moderate, or challenging")
+
+class AccountabilitySetup(BaseModel):
+    tracking_method: str = Field(description="How user wants to track (journal, app, etc)")
+    check_in_time: str = Field(description="Preferred check-in time")
+    reminder_style: str = Field(description="gentle, firm, or motivational")
+    support_needed: List[str] = Field(description="Types of support user wants")
 
 # ========== SESSION STORAGE ==========
 
 sessions = {}
 
-class PhaseState(TypedDict):
-    phase: int  # 1-6
-    messages: List
-    user_id: str
-    api_key: str
+# ========== JORDAN PROMPTS WITH CONTEXT INJECTION ==========
+
+def build_jordan_prompt(phase: int, phase_data: Dict[str, Any]) -> str:
+    """Build Jordan's system prompt with context from previous phases"""
     
-    # Phase outputs
-    diagnostic_summary: Optional[DiagnosticSummary]
-    skill_assessment: Optional[SkillGapAssessment]
-    study_guide: Optional[StudyGuide]
-    goals: Optional[GoalSet]
-    action_plan: Optional[ActionPlan]
+    base_personality = """You are Jordan, an adaptive AI social skills coach. You're the SAME person throughout all phases, just adjusting your approach.
 
-# ========== PHASE PROMPTS ==========
+YOUR CORE TRAITS:
+- Empathetic but direct when needed
+- Remember EVERYTHING from previous conversations
+- Adapt your style to what the user needs right now
+- Use "we" language - you're partners in this
 
-PHASE_1_PROMPT = """You are Dr. Maya, a warm and empathetic therapist specializing in social anxiety and interpersonal relationships.
+"""
+    
+    # Build context from previous phases
+    context = ""
+    
+    if phase >= 2 and phase_data.get("diagnostic_summary"):
+        diag = phase_data["diagnostic_summary"]
+        context += f"""
+CONTEXT FROM PHASE 1 (Discovery):
+- Main Challenge: {diag.get('main_challenge')}
+- Emotional State: {diag.get('emotional_state')}
+- Where It Happens: {diag.get('context')}
+- Impact: {diag.get('impact')}
+- Backstory: {diag.get('backstory')}
 
-YOUR PERSONALITY:
-- Warm, caring, non-judgmental
-- Speak like a compassionate friend, not a clinical professional
-- Use phrases like "That sounds really hard" and "I hear you"
-- Validate emotions before asking more questions
-- Never use bullet points or lists - speak naturally
+"""
+    
+    if phase >= 3 and phase_data.get("skill_assessment"):
+        skills = phase_data["skill_assessment"]
+        context += f"""
+CONTEXT FROM PHASE 2 (Assessment):
+- Primary Weakness: {skills.get('primary_weakness')}
+- Skill Gaps: {', '.join(skills.get('skill_gaps', []))}
+- Hidden Strength: {skills.get('hidden_strength')}
+- Priority Order: {', '.join(skills.get('improvement_priority', []))}
 
-YOUR GOAL:
-Understand the USER'S core social challenge through gentle conversation. You're trying to understand:
-1. What they're struggling with (surface problem)
-2. How it makes them feel (emotional impact)
-3. Where/when it happens (context)
-4. How long this has been going on
-5. What they've already tried
+"""
+    
+    if phase >= 4 and phase_data.get("study_guide"):
+        guide = phase_data["study_guide"]
+        context += f"""
+CONTEXT FROM PHASE 3 (Education):
+- Key Concepts Taught: {', '.join(guide.get('key_concepts', []))}
+- Number of Lessons: {len(guide.get('lessons', []))}
 
-CONVERSATION STYLE:
-- Ask ONE question at a time
-- Keep responses under 60 words
-- Reflect back what you heard: "So it sounds like..."
-- Be genuinely curious about their experience
-- Don't rush to solutions - just listen and understand
+"""
+    
+    if phase >= 5 and phase_data.get("goals"):
+        goals = phase_data["goals"]
+        context += f"""
+CONTEXT FROM PHASE 4 (Goal Setting):
+- Week 1 Goal: {goals.get('week_1_goal', {}).get('description', 'Not set')}
+- Week 2 Goal: {goals.get('week_2_goal', {}).get('description', 'Not set')}
+- Week 3-4 Goal: {goals.get('week_3_4_goal', {}).get('description', 'Not set')}
 
-EXAMPLES:
-User: "I can't make friends"
-You: "That must feel really lonely. When you say you can't make friends, what does that look like? Is it hard to start conversations, or does something else happen?"
+"""
+    
+    if phase >= 6 and phase_data.get("action_plan"):
+        plan = phase_data["action_plan"]
+        context += f"""
+CONTEXT FROM PHASE 5 (Action Planning):
+- Plan: {plan.get('plan_title')}
+- Difficulty: {plan.get('difficulty_level')}
+- Days Planned: {len(plan.get('daily_tasks', []))}
 
-User: "Conversations just die out"
-You: "I can imagine how frustrating that is. When a conversation starts to fizzle, what are you thinking in that moment? Are you trying to think of what to say next?"
+"""
+    
+    # Phase-specific instructions
+    phase_instructions = {
+        1: """
+CURRENT PHASE: DISCOVERY (Diagnostic Listening)
 
-REMEMBER: You're Dr. Maya - warm, empathetic, and focused on understanding, not fixing (yet)."""
-
-PHASE_2_PROMPT = """You are Coach Jordan, a direct and tactical social skills analyst. You have a background in behavioral psychology and communication training.
-
-YOUR PERSONALITY:
-- Direct, no-nonsense, but still friendly
-- Use specific examples and ask for concrete details
-- Speak like a fitness coach: "Let's break this down"
-- Use scales and measurements: "Rate that 1-10"
-- Challenge vague answers: "What exactly do you mean by that?"
-
-YOUR GOAL:
-Identify SPECIFIC, measurable skill gaps. Not "communication problems" but "asks only closed-ended questions" or "doesn't make eye contact when nervous."
-
-You're assessing:
-1. Conversation initiation skills (approaching, opening lines)
-2. Conversation maintenance (questions, active listening, sharing)
-3. Non-verbal communication (eye contact, body language, tone)
-4. Social awareness (reading cues, knowing when to leave)
-5. Emotional regulation (managing anxiety, handling awkwardness)
-
-CONVERSATION STYLE:
-- Ask targeted, specific questions
-- Request examples: "Walk me through your last awkward interaction"
-- Use hypotheticals: "If someone mentions they went hiking, what would you say next?"
-- Challenge them: "Is it that you don't know what to say, or you're afraid to say it?"
-- Keep responses under 80 words
-
-EXAMPLES:
-User: "I'm bad at small talk"
-You: "Let's get specific. When you're in a small talk situation, what happens? Do you go blank, or do you think of things but don't say them? Big difference."
-
-User: "I don't know what to ask"
-You: "Okay, rate this 1-10: How comfortable are you asking follow-up questions when someone shares something about themselves?"
-
-REMEMBER: You're Coach Jordan - tactical, specific, and focused on measurable skills."""
-
-PHASE_3_PROMPT = """You are Professor Chen, a knowledgeable and patient educator specializing in social psychology and communication theory.
-
-YOUR PERSONALITY:
-- Scholarly but approachable (like a favorite college professor)
-- Explain the "why" behind everything
-- Use frameworks, models, and research
-- Encouraging: "This is very learnable!"
-- Patient with questions
+YOUR APPROACH RIGHT NOW:
+- Be warm, patient, and deeply empathetic
+- Ask ONE question at a time (under 60 words)
+- Validate their feelings: "That sounds really hard"
+- Dig deeper to understand: what, when, where, why, how long
+- Don't rush - just understand their story
 
 YOUR GOAL:
-Teach the user WHY their challenges exist and HOW social skills actually work. Provide educational content that builds understanding before action.
+After 5-8 exchanges, you should understand:
+1. Their core social challenge (specific, not vague)
+2. How it makes them feel emotionally
+3. Where/when it happens most
+4. How it impacts their life
+5. Brief backstory (how long, what triggered it)
 
-You'll cover topics like:
-- The psychology of connection
-- How conversations actually flow
-- Why certain techniques work
-- Common mistakes and why they happen
-- The science behind social anxiety
+When you have enough info, you'll generate a DiagnosticSummary.
+""",
+        
+        2: """
+CURRENT PHASE: ASSESSMENT (Skills Analysis)
 
-CONVERSATION STYLE:
-- Teach in digestible chunks
-- Use examples and analogies
-- Invite questions: "Does that make sense?"
-- Build on previous phases: "Coach Jordan identified that you struggle with X. Let me explain why that happens..."
-- Can write longer responses (100-150 words) since you're teaching
-
-EXAMPLES:
-User: "Why do I go blank in conversations?"
-You: "Great question! This is actually a common cognitive pattern. When you're anxious about what to say next, your brain splits its attention between listening and planning. This creates 'cognitive load' - your working memory gets overloaded. The irony? The thing you're worried about (what to say next) is usually hidden in what they're CURRENTLY saying. That's why active listening is the real superpower here."
-
-REMEMBER: You're Prof. Chen - educational, patient, and focused on building understanding."""
-
-PHASE_4_PROMPT = """You are Alex, a goal-setting strategist who helps people define clear, achievable objectives.
-
-YOUR PERSONALITY:
-- Motivating but realistic
-- Collaborative: "Let's build this together"
-- Strategic thinker
-- Pushes back on unrealistic goals
-- Celebrates ambition but grounds it in reality
+YOUR APPROACH RIGHT NOW:
+- Be direct and tactical: "Let's break this down"
+- Ask specific questions, request examples
+- Use scales: "Rate that 1-10"
+- Challenge vague answers: "What EXACTLY happens?"
+- Focus on observable, measurable skills
 
 YOUR GOAL:
-Co-create 3 SMART goals with the user:
-- Goal 1 (Week 1): Foundation - easy, builds confidence
-- Goal 2 (Week 2): Expansion - moderate challenge
-- Goal 3 (Week 3-4): Integration - meaningful progress
+Identify 3-5 SPECIFIC skill gaps in:
+- Conversation initiation (starting talks)
+- Conversation maintenance (keeping it going)
+- Non-verbal communication (body language, eye contact)
+- Social awareness (reading cues)
+- Emotional regulation (managing anxiety)
 
-CONVERSATION STYLE:
-- Present draft goals and ask for feedback
-- Negotiate difficulty: "Is this too easy? Too hard?"
-- Adjust based on their schedule, lifestyle, comfort level
-- Make goals SPECIFIC and MEASURABLE
-- Keep responses under 100 words
+When you have enough data, you'll generate a SkillGapAssessment.
+""",
+        
+        3: """
+CURRENT PHASE: EDUCATION (Teaching)
 
-EXAMPLES:
-You: "Based on everything we've discussed, here's my draft for Goal 1: 'For 7 days, practice active listening by asking at least 2 follow-up questions in every conversation.' Too easy? Too hard?"
-
-User: "That seems really hard actually"
-You: "Okay, let's dial it back. How about this: 'For 7 days, in at least ONE conversation per day, consciously focus on listening instead of planning your response, and ask at least 1 follow-up question.' Better?"
-
-REMEMBER: You're Alex - strategic, collaborative, focused on realistic goals."""
-
-PHASE_5_PROMPT = """You are Riley, an energetic action planner who turns goals into daily tasks.
-
-YOUR PERSONALITY:
-- Enthusiastic and supportive (like a personal trainer)
-- Practical: "Let's make this fit YOUR life"
-- Flexible: willing to adjust plans
-- Realistic about time and energy
-- Uses casual language: "Yo!" "Let's do this!"
+YOUR APPROACH RIGHT NOW:
+- Be patient and educational like a professor
+- Explain the WHY behind everything
+- Use frameworks, examples, analogies
+- Build on what you learned in Phase 1 & 2
+- Keep responses focused (100-150 words)
 
 YOUR GOAL:
-Create a customized 5-day action plan with:
-- 2-3 tasks per day
-- Increasing difficulty
-- Reflection prompts
-- Fits their actual schedule and lifestyle
+Teach them:
+1. Why their specific challenges happen (psychology)
+2. How social skills actually work
+3. Common mistakes and why they occur
+4. Techniques that address THEIR gaps
+5. The science behind effective strategies
 
-CONVERSATION STYLE:
-- Show draft plan and ask for feedback
-- Adjust based on their constraints: "I don't have time for that"
+When you've taught key concepts, you'll generate a StudyGuide.
+""",
+        
+        4: """
+CURRENT PHASE: GOAL SETTING (Strategic Planning)
+
+YOUR APPROACH RIGHT NOW:
+- Be collaborative: "Let's build this together"
+- Present draft goals, get feedback
+- Push back on unrealistic goals
+- Make goals SMART (Specific, Measurable, Achievable, Relevant, Time-bound)
+- Adjust based on their lifestyle and comfort
+
+YOUR GOAL:
+Co-create 3 goals:
+- Week 1: Easy foundation goal (builds confidence)
+- Week 2: Moderate expansion goal (stretches them)
+- Week 3-4: Integration goal (meaningful progress)
+
+Base goals on THEIR specific challenges and skill gaps from earlier phases.
+
+When goals are agreed upon, you'll generate a GoalSet.
+""",
+        
+        5: """
+CURRENT PHASE: ACTION PLANNING (Practical Tasks)
+
+YOUR APPROACH RIGHT NOW:
+- Be energetic and practical
+- Create tasks that fit THEIR actual life
+- Be flexible - adjust to their schedule
 - Make it feel achievable, not overwhelming
-- Get specific about WHEN and WHERE they'll do tasks
-- Keep responses under 100 words
-
-EXAMPLES:
-You: "Here's Day 1: Morning - observe 3 conversations and notice what makes them flow (10 min). Lunch - practice asking 1 follow-up question with a coworker (5 min). Evening - journal about what you noticed (5 min). Doable?"
-
-User: "I don't have coworkers, I work from home"
-You: "Got it! Let's swap that. Lunch: Have a call with a friend/family member and practice the follow-up question there instead. Or join an online community and try it in a voice chat. Which works better for you?"
-
-REMEMBER: You're Riley - energetic, practical, and focused on making it FIT their life."""
-
-PHASE_6_PROMPT = """You are Sam, a supportive accountability partner who helps set up tracking and reminders.
-
-YOUR PERSONALITY:
-- Friendly and casual (like a supportive roommate)
-- Encouraging: "You got this!"
-- Practical about tracking
-- Non-judgmental about setbacks
-- Excited to check in
+- Get specific about when and where
 
 YOUR GOAL:
-Set up the tracking system and prepare for ongoing support:
-- How they want to track progress
-- When they want reminders
-- What success looks like
-- How to handle setbacks
+Create a 5-day action plan with:
+- 2-3 tasks per day (morning/afternoon/evening)
+- Tasks directly tied to their goals
+- Increasing difficulty across days
+- Reflection prompts
+- Fits their real constraints
 
-CONVERSATION STYLE:
-- Casual and conversational
-- Ask about preferences
-- Set expectations for check-ins
-- Make them feel supported, not monitored
-- Keep responses under 80 words
-
-EXAMPLES:
-You: "Hey! So I'll be your accountability buddy. Quick questions: What time works best for daily check-ins? And do you want gentle reminders or more of a 'get it done!' vibe?"
-
-User: "Morning works, and keep it gentle please"
-You: "Perfect! I'll ping you each morning with a friendly nudge. And hey - if you skip a day, no judgment. This is about progress, not perfection. Ready to save everything and get started?"
-
-REMEMBER: You're Sam - supportive, casual, and focused on ongoing accountability."""
-
-# ========== LLM HELPER ==========
-
-def get_llm(api_key: str, structured_output=None):
-    llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
-        temperature=0.7,
-        groq_api_key=api_key
-    )
-    if structured_output:
-        return llm.with_structured_output(structured_output)
-    return llm
-
-# ========== PHASE HANDLERS ==========
-
-def handle_phase_1(state: PhaseState, user_message: str) -> dict:
-    """Dr. Maya - Diagnostic Therapist"""
-    api_key = state["api_key"]
-    messages = state["messages"]
-    
-    # Add user message
-    messages.append(HumanMessage(content=user_message))
-    
-    # Generate response
-    llm = get_llm(api_key)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", PHASE_1_PROMPT),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({"messages": messages})
-    messages.append(response)
-    
-    return {
-        "messages": messages,
-        "response": response.content
-    }
-
-def handle_phase_2(state: PhaseState, user_message: str) -> dict:
-    """Coach Jordan - Skills Analyst"""
-    api_key = state["api_key"]
-    messages = state["messages"]
-    
-    messages.append(HumanMessage(content=user_message))
-    
-    llm = get_llm(api_key)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", PHASE_2_PROMPT),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({"messages": messages})
-    messages.append(response)
-    
-    return {
-        "messages": messages,
-        "response": response.content
-    }
-
-def handle_phase_3(state: PhaseState, user_message: str) -> dict:
-    """Prof. Chen - Educator"""
-    api_key = state["api_key"]
-    messages = state["messages"]
-    
-    messages.append(HumanMessage(content=user_message))
-    
-    llm = get_llm(api_key)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", PHASE_3_PROMPT),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({"messages": messages})
-    messages.append(response)
-    
-    return {
-        "messages": messages,
-        "response": response.content
-    }
-
-def handle_phase_4(state: PhaseState, user_message: str) -> dict:
-    """Alex - Goal Strategist"""
-    api_key = state["api_key"]
-    messages = state["messages"]
-    
-    messages.append(HumanMessage(content=user_message))
-    
-    llm = get_llm(api_key)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", PHASE_4_PROMPT),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({"messages": messages})
-    messages.append(response)
-    
-    return {
-        "messages": messages,
-        "response": response.content
-    }
-
-def handle_phase_5(state: PhaseState, user_message: str) -> dict:
-    """Riley - Action Planner"""
-    api_key = state["api_key"]
-    messages = state["messages"]
-    
-    messages.append(HumanMessage(content=user_message))
-    
-    llm = get_llm(api_key)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", PHASE_5_PROMPT),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({"messages": messages})
-    messages.append(response)
-    
-    return {
-        "messages": messages,
-        "response": response.content
-    }
-
-def handle_phase_6(state: PhaseState, user_message: str) -> dict:
-    """Sam - Accountability Partner"""
-    api_key = state["api_key"]
-    messages = state["messages"]
-    
-    messages.append(HumanMessage(content=user_message))
-    
-    llm = get_llm(api_key)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", PHASE_6_PROMPT),
-        MessagesPlaceholder(variable_name="messages"),
-    ])
-    
-    chain = prompt | llm
-    response = chain.invoke({"messages": messages})
-    messages.append(response)
-    
-    return {
-        "messages": messages,
-        "response": response.content
-    }
-
-# ========== PHASE INITIALIZATION ==========
-
-def get_phase_greeting(phase: int, previous_data: dict = None) -> str:
-    """Get the greeting message when entering a new phase"""
-    greetings = {
-        1: "Hi! I'm Dr. Maya, and I'm here to listen and understand what you're going through. Take your time - this is a safe space. What brings you here today?",
+When plan is customized to their needs, you'll generate an ActionPlan.
+""",
         
-        2: "Hey! I'm Coach Jordan. I've read Dr. Maya's notes, and I want to get tactical with you. Let's pinpoint exactly which skills need work. Ready to dive in?",
-        
-        3: "Hello! I'm Professor Chen. Coach Jordan identified some specific skill gaps for you. I'd like to teach you the psychology and science behind why these challenges happen and how to overcome them. Let's start with the fundamentals - sound good?",
-        
-        4: "Hi! I'm Alex, your goal strategist. Based on everything we've learned, I'm going to help you create 3 clear, achievable goals. We'll build these together - I'll suggest something, you tell me if it fits. Deal?",
-        
-        5: "Yo! Riley here. I'm going to turn those goals into a 5-day action plan - actual tasks you can do each day. We'll make sure it fits YOUR schedule and lifestyle. Let's build this!",
-        
-        6: "Hey! I'm Sam, your accountability buddy. Let's set up tracking so you can crush this plan. I'll check in with you, celebrate wins, and help when things get tough. First, let me ask - how do you want to track your progress?"
-    }
-    return greetings.get(phase, "Hello! How can I help you?")
+        6: """
+CURRENT PHASE: ACCOUNTABILITY SETUP (Support System)
 
-# ========== API ENDPOINTS ==========
+YOUR APPROACH RIGHT NOW:
+- Be supportive and casual like a friend
+- Ask about their tracking preferences
+- Set up check-in schedule
+- Prepare for setbacks with compassion
+- Get them excited to start
+
+YOUR GOAL:
+Set up:
+1. How they'll track progress
+2. When they want reminders
+3. What style of support they prefer
+4. How to handle missed days
+5. First check-in timing
+
+When setup is complete, you'll generate an AccountabilitySetup.
+"""
+    }
+    
+    return base_personality + context + phase_instructions.get(phase, "")
+
+# ========== PHASE COMPLETION DETECTION ==========
+
+def should_complete_phase(phase: int, messages: List, turn_count: int) -> bool:
+    """Determine if current phase has enough information to move forward"""
+    
+    # Minimum turns before completion
+    min_turns = {
+        1: 5,  # Need enough diagnostic info
+        2: 4,  # Need skill assessment data
+        3: 3,  # Need to teach core concepts
+        4: 3,  # Need to agree on goals
+        5: 2,  # Need to customize plan
+        6: 2   # Need accountability preferences
+    }
+    
+    return turn_count >= min_turns.get(phase, 3)
+
+# ========== STRUCTURED OUTPUT GENERATION ==========
+
+def generate_phase_output(phase: int, messages: List, api_key: str, phase_data: Dict) -> Optional[BaseModel]:
+    """Generate structured output at the end of each phase"""
+    
+    # Create conversation summary for context
+    conversation_text = "\n".join([
+        f"{'User' if isinstance(msg, HumanMessage) else 'Jordan'}: {msg.content}"
+        for msg in messages[-10:]  # Last 10 messages for context
+    ])
+    
+    extraction_prompts = {
+        1: f"""Based on this conversation, extract a diagnostic summary.
+
+Conversation:
+{conversation_text}
+
+Extract:
+- main_challenge: The core social skill issue (be specific)
+- emotional_state: How they feel about it
+- context: Where/when this happens most
+- impact: How it affects their life
+- backstory: Brief history""",
+        
+        2: f"""Based on this skills assessment conversation, extract specific skill gaps.
+
+Conversation:
+{conversation_text}
+
+Previous Context:
+- Main Challenge: {phase_data.get('diagnostic_summary', {}).get('main_challenge', 'Unknown')}
+
+Extract:
+- skill_gaps: 3-5 specific, measurable skills (not vague)
+- skill_ratings: Dict of skill -> rating (1-10)
+- primary_weakness: The #1 skill to focus on
+- hidden_strength: One strength they have
+- improvement_priority: Ordered list of skills to improve""",
+        
+        3: f"""Based on this educational conversation, create a study guide.
+
+Conversation:
+{conversation_text}
+
+User's Challenge: {phase_data.get('diagnostic_summary', {}).get('main_challenge', 'Unknown')}
+Skill Gaps: {', '.join(phase_data.get('skill_assessment', {}).get('skill_gaps', []))}
+
+Extract:
+- title: Study guide title
+- key_concepts: 5 core concepts taught
+- lessons: 3-5 lessons with topic, explanation, and exercise
+- resources: Additional learning materials""",
+        
+        4: f"""Based on this goal-setting conversation, create the goal set.
+
+Conversation:
+{conversation_text}
+
+Context:
+- Challenge: {phase_data.get('diagnostic_summary', {}).get('main_challenge')}
+- Primary Weakness: {phase_data.get('skill_assessment', {}).get('primary_weakness')}
+
+Extract:
+- week_1_goal: Easy foundation goal (dict with description, metric, timeline)
+- week_2_goal: Moderate expansion goal
+- week_3_4_goal: Integration goal
+- success_metrics: How to measure overall success""",
+        
+        5: f"""Based on this action planning conversation, create the action plan.
+
+Conversation:
+{conversation_text}
+
+Goals:
+- Week 1: {phase_data.get('goals', {}).get('week_1_goal', {}).get('description')}
+- Week 2: {phase_data.get('goals', {}).get('week_2_goal', {}).get('description')}
+
+Extract:
+- plan_title: Action plan title
+- daily_tasks: 5 days of tasks (each day has morning, afternoon, evening tasks)
+- reflection_prompts: Daily reflection questions
+- difficulty_level: easy, moderate, or challenging""",
+        
+        6: f"""Based on this accountability setup conversation, extract preferences.
+
+Conversation:
+{conversation_text}
+
+Extract:
+- tracking_method: How they want to track progress
+- check_in_time: Preferred time for check-ins
+- reminder_style: gentle, firm, or motivational
+- support_needed: Types of support they want"""
+    }
+    
+    output_models = {
+        1: DiagnosticSummary,
+        2: SkillGapAssessment,
+        3: StudyGuide,
+        4: GoalSet,
+        5: ActionPlan,
+        6: AccountabilitySetup
+    }
+    
+    prompt = extraction_prompts.get(phase)
+    model_class = output_models.get(phase)
+    
+    if not prompt or not model_class:
+        return None
+    
+    try:
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0.3,  # Lower temp for structured extraction
+            groq_api_key=api_key
+        ).with_structured_output(model_class)
+        
+        result = llm.invoke(prompt)
+        return result
+        
+    except Exception as e:
+        print(f"Error generating structured output for phase {phase}: {e}")
+        return None
+
+# ========== MAIN CHAT HANDLER ==========
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    """Main chat endpoint - handles all phases"""
+    """Main chat endpoint with proper data flow between phases"""
     data = request.json or {}
     session_id = data.get("session_id")
     user_message = data.get("message", "")
     api_key = data.get("api_key")
-    phase = data.get("phase", 1)
     
-    if not session_id:
-        return jsonify({"error": "session_id required"}), 400
-    
-    if not api_key:
-        return jsonify({"error": "api_key required"}), 400
+    if not session_id or not api_key:
+        return jsonify({"error": "session_id and api_key required"}), 400
     
     # Initialize new session
     if session_id not in sessions:
-        greeting = get_phase_greeting(phase)
         sessions[session_id] = {
-            "phase": phase,
-            "messages": [AIMessage(content=greeting)],
+            "phase": 1,
+            "messages": [],
+            "turn_count": 0,
             "user_id": data.get("user_id", "anonymous"),
             "api_key": api_key,
+            "created_at": datetime.now().isoformat(),
+            
+            # Structured data from each phase
             "diagnostic_summary": None,
             "skill_assessment": None,
             "study_guide": None,
             "goals": None,
             "action_plan": None,
+            "accountability_setup": None,
         }
+        
+        # Send initial greeting
+        phase = sessions[session_id]["phase"]
+        greeting = get_jordan_greeting(phase)
+        sessions[session_id]["messages"].append(AIMessage(content=greeting))
         
         return jsonify({
             "response": greeting,
             "phase": phase,
-            "session_id": session_id
+            "session_id": session_id,
+            "phase_complete": False
         })
     
     # Get current state
     state = sessions[session_id]
-    state["api_key"] = api_key
+    phase = state["phase"]
+    messages = state["messages"]
     
-    # Route to appropriate phase handler
-    phase_handlers = {
-        1: handle_phase_1,
-        2: handle_phase_2,
-        3: handle_phase_3,
-        4: handle_phase_4,
-        5: handle_phase_5,
-        6: handle_phase_6,
+    # Add user message
+    messages.append(HumanMessage(content=user_message))
+    state["turn_count"] += 1
+    
+    # Build Jordan's prompt with full context
+    phase_data = {
+        "diagnostic_summary": state.get("diagnostic_summary"),
+        "skill_assessment": state.get("skill_assessment"),
+        "study_guide": state.get("study_guide"),
+        "goals": state.get("goals"),
+        "action_plan": state.get("action_plan"),
     }
     
-    handler = phase_handlers.get(phase)
-    if not handler:
-        return jsonify({"error": f"Invalid phase: {phase}"}), 400
+    system_prompt = build_jordan_prompt(phase, phase_data)
     
+    # Generate response
     try:
-        result = handler(state, user_message)
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
+            groq_api_key=api_key
+        )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="messages"),
+        ])
+        
+        chain = prompt | llm
+        response = chain.invoke({"messages": messages})
+        messages.append(response)
+        
+        # Check if phase should complete
+        phase_complete = should_complete_phase(phase, messages, state["turn_count"])
+        
+        # Generate structured output if phase is complete
+        structured_output = None
+        if phase_complete:
+            structured_output = generate_phase_output(phase, messages, api_key, phase_data)
+            
+            # Store structured output
+            output_keys = {
+                1: "diagnostic_summary",
+                2: "skill_assessment",
+                3: "study_guide",
+                4: "goals",
+                5: "action_plan",
+                6: "accountability_setup"
+            }
+            
+            if structured_output and phase in output_keys:
+                state[output_keys[phase]] = structured_output.model_dump()
+        
         sessions[session_id] = state
         
         return jsonify({
-            "response": result["response"],
+            "response": response.content,
             "phase": phase,
             "session_id": session_id,
-            "message_count": len(state["messages"])
+            "turn_count": state["turn_count"],
+            "phase_complete": phase_complete,
+            "structured_data": structured_output.model_dump() if structured_output else None
         })
         
     except Exception as e:
@@ -799,27 +823,30 @@ def chat():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# ========== PHASE TRANSITION ==========
+
 @app.route("/transition", methods=["POST"])
 def transition_phase():
-    """Transition to next phase - triggered by frontend button"""
+    """Transition to next phase with full context"""
     data = request.json or {}
     session_id = data.get("session_id")
-    new_phase = data.get("new_phase")
     
     if not session_id or session_id not in sessions:
         return jsonify({"error": "Invalid session_id"}), 400
     
-    if not new_phase or new_phase < 1 or new_phase > 6:
-        return jsonify({"error": "Invalid phase number"}), 400
-    
     state = sessions[session_id]
     old_phase = state["phase"]
+    new_phase = old_phase + 1
     
-    # Update phase
+    if new_phase > 6:
+        return jsonify({"error": "Already at final phase"}), 400
+    
+    # Update phase and reset turn count
     state["phase"] = new_phase
+    state["turn_count"] = 0
     
-    # Get greeting for new phase
-    greeting = get_phase_greeting(new_phase)
+    # Get greeting with context
+    greeting = get_jordan_greeting(new_phase, state)
     state["messages"].append(AIMessage(content=greeting))
     
     sessions[session_id] = state
@@ -829,36 +856,109 @@ def transition_phase():
         "old_phase": old_phase,
         "new_phase": new_phase,
         "session_id": session_id,
-        "message": f"Transitioned from Phase {old_phase} to Phase {new_phase}"
+        "message": f"Transitioned to Phase {new_phase}"
     })
+
+# ========== PHASE GREETINGS ==========
+
+def get_jordan_greeting(phase: int, state: Dict = None) -> str:
+    """Get Jordan's greeting with context from previous phases"""
+    
+    base_greetings = {
+        1: "Hi! I'm Jordan, your social skills coach. I'm here to listen and understand what you're going through. This is a safe space. What brings you here today?",
+        2: "Alright, let's shift gears. I want to get tactical now and pinpoint exactly which skills need work. Ready to dive in?",
+        3: "Now that I understand your challenges, let me teach you the science behind why this happens and how to overcome it. Sound good?",
+        4: "Time to set some goals! I'll help you create 3 clear, achievable targets based on everything we've learned. Let's build this together.",
+        5: "Let's turn those goals into action! I'll create a customized 5-day plan that fits YOUR life. Ready?",
+        6: "Final step! Let's set up your tracking and accountability system so you can crush this. How do you want to stay on track?"
+    }
+    
+    greeting = base_greetings.get(phase, "Hey! How can I help?")
+    
+    # Add context if available
+    if state and phase > 1:
+        if phase == 2 and state.get("diagnostic_summary"):
+            challenge = state["diagnostic_summary"].get("main_challenge", "")
+            greeting += f" I know you've been struggling with {challenge.lower()}. Let's figure out the exact skills we need to work on."
+        
+        elif phase == 3 and state.get("skill_assessment"):
+            primary = state["skill_assessment"].get("primary_weakness", "")
+            greeting += f" Your primary challenge is {primary.lower()}. Let me explain why that happens and what we can do about it."
+        
+        elif phase == 4 and state.get("study_guide"):
+            greeting += " Now that you understand the concepts, let's turn that knowledge into concrete goals."
+        
+        elif phase == 5 and state.get("goals"):
+            greeting += " You've got solid goals set. Let's break them down into daily actions."
+        
+        elif phase == 6 and state.get("action_plan"):
+            greeting += " Your plan is ready. Let's make sure you have the support to actually do it."
+    
+    return greeting
+
+# ========== SESSION MANAGEMENT ==========
 
 @app.route("/session/<session_id>", methods=["GET"])
 def get_session(session_id):
-    """Get current session state"""
+    """Get complete session state"""
     if session_id not in sessions:
         return jsonify({"error": "Session not found"}), 404
     
     state = sessions[session_id]
     return jsonify({
         "phase": state["phase"],
+        "turn_count": state["turn_count"],
         "message_count": len(state["messages"]),
-        "has_diagnostic": state["diagnostic_summary"] is not None,
-        "has_assessment": state["skill_assessment"] is not None,
-        "has_study_guide": state["study_guide"] is not None,
-        "has_goals": state["goals"] is not None,
-        "has_plan": state["action_plan"] is not None,
+        "created_at": state["created_at"],
+        "diagnostic_summary": state.get("diagnostic_summary"),
+        "skill_assessment": state.get("skill_assessment"),
+        "study_guide": state.get("study_guide"),
+        "goals": state.get("goals"),
+        "action_plan": state.get("action_plan"),
+        "accountability_setup": state.get("accountability_setup"),
     })
 
 @app.route("/reset/<session_id>", methods=["POST"])
 def reset_session(session_id):
-    """Reset a session"""
+    """Reset session"""
     if session_id in sessions:
         del sessions[session_id]
-    return jsonify({"message": "Session reset"})
+    return jsonify({"message": "Session reset successfully"})
+
+@app.route("/export/<session_id>", methods=["GET"])
+def export_session(session_id):
+    """Export full session data"""
+    if session_id not in sessions:
+        return jsonify({"error": "Session not found"}), 404
+    
+    state = sessions[session_id]
+    
+    # Create exportable format
+    export_data = {
+        "session_id": session_id,
+        "user_id": state["user_id"],
+        "created_at": state["created_at"],
+        "current_phase": state["phase"],
+        "conversation_history": [
+            {
+                "role": "user" if isinstance(msg, HumanMessage) else "jordan",
+                "content": msg.content,
+            }
+            for msg in state["messages"]
+        ],
+        "diagnostic_summary": state.get("diagnostic_summary"),
+        "skill_assessment": state.get("skill_assessment"),
+        "study_guide": state.get("study_guide"),
+        "goals": state.get("goals"),
+        "action_plan": state.get("action_plan"),
+        "accountability_setup": state.get("accountability_setup"),
+    }
+    
+    return jsonify(export_data)
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
+    
 
 
 @app.route('/reflect-analyze', methods=['POST'])
