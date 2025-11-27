@@ -5,6 +5,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TypedDict, Annotated, Literal
+from flask_cors import cross_origin
 
 # Third-party
 from dotenv import load_dotenv
