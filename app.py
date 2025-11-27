@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS, cross_origin
 from openai import OpenAI
+from typing import Dict
 import os
 import json
 from dotenv import load_dotenv
