@@ -322,12 +322,16 @@ def parse_story_analysis(analysis_text):
         }
 
 
+
+# ========== PYDANTIC MODELS ==========
+
 class DiagnosticSummary(BaseModel):
     main_challenge: str = Field(description="The core social skill challenge identified")
     emotional_state: str = Field(description="User's emotional state (anxious, frustrated, hopeful, etc.)")
     context: str = Field(description="Where this challenge shows up most")
     impact: str = Field(description="How this affects their life")
     backstory: str = Field(description="Brief history - how long, what triggered it")
+    frequency: str = Field(description="How often this happens (daily/weekly/occasionally)")
     
 class SkillGapAssessment(BaseModel):
     skill_gaps: List[str] = Field(description="3-5 specific skills needing improvement", min_length=3, max_length=5)
@@ -364,57 +368,376 @@ class AccountabilitySetup(BaseModel):
 
 sessions = {}
 
-# ========== KEY FACTS EXTRACTION ==========
+# ========== PHASE CHECKPOINTS CONFIGURATION ==========
 
-def extract_key_facts(messages: List, phase: int) -> List[str]:
-    """Extract key facts on-the-fly from recent conversation"""
+PHASE_CHECKPOINTS = {
+    1: {
+        "name": "Discovery",
+        "required_fields": ["main_challenge", "context", "frequency", "duration", "emotion", "consequence"],
+        "min_turns": 4,
+        "intro": "Hi! I'm Jordan, your social skills coach. I'm here to listen and understand what you're going through. This is a safe space - and I need to understand a few key things about your situation so I can help you effectively.",
+        "checkpoints": [
+            {
+                "field": "main_challenge",
+                "setup": "First, let's get specific about what you're struggling with.",
+                "question": "What exactly happens when you try to [interact socially]? Walk me through a recent example.",
+                "why": "I need the specifics because 'bad at socializing' could mean a hundred different things. The more specific we are, the better I can help.",
+                "confirmation": "Got it - so the core challenge is: {value}. Let me make sure I understand..."
+            },
+            {
+                "field": "context",
+                "setup": "Now, where does this happen most?",
+                "question": "Is this at work? Social events? Dating? Family gatherings? Where do you struggle most?",
+                "why": "Different contexts need different strategies, so I need to know where to focus.",
+                "confirmation": "Okay, so this primarily shows up in {value} situations."
+            },
+            {
+                "field": "frequency",
+                "setup": "Let's talk about how often this happens.",
+                "question": "Is this a daily thing? Weekly? Only in specific situations?",
+                "why": "Frequency tells me how urgent this is and how much practice opportunity you have.",
+                "confirmation": "So this happens {value}. That's important context."
+            },
+            {
+                "field": "duration",
+                "setup": "How long has this been going on?",
+                "question": "Has this always been an issue, or did something trigger it? When did it start or get worse?",
+                "why": "Understanding the timeline helps me see if this is a lifelong pattern or something situational we can address.",
+                "confirmation": "Alright, so this has been happening for {value}."
+            },
+            {
+                "field": "emotion",
+                "setup": "Let's talk about how this makes you feel.",
+                "question": "When you're in these situations, what's the dominant emotion? Anxious? Frustrated? Embarrassed? Hopeless?",
+                "why": "Your emotional response is just as important as the behavior - it tells me what's driving this.",
+                "confirmation": "I hear you - you're feeling {value}. That makes complete sense given what you're dealing with."
+            },
+            {
+                "field": "consequence",
+                "setup": "Last piece - and this is important.",
+                "question": "How is this actually affecting your life? What have you lost or missed because of this?",
+                "why": "This is your 'why' - the reason we're doing this work. I need to understand what's at stake.",
+                "confirmation": "So the real impact is: {value}. That's what we're going to change."
+            }
+        ]
+    },
+    2: {
+        "name": "Assessment",
+        "required_fields": ["initiation_rating", "maintenance_rating", "nonverbal_rating", "awareness_rating", "regulation_rating"],
+        "min_turns": 5,
+        "intro": "Now let's get tactical and identify exactly which skills need work. I'm going to ask you to rate 5 key areas on a scale of 1-10, and then we'll dig into specific examples. This isn't about judgment - it's about finding exactly where to focus our energy. Ready?",
+        "checkpoints": [
+            {
+                "field": "initiation_rating",
+                "setup": "First up: starting conversations with new people or acquaintances.",
+                "question": "On a scale 1-10, how comfortable are you initiating conversations with strangers or people you don't know well?",
+                "follow_up": "What exactly stops you? Fear of rejection? Don't know what to say? Something else?",
+                "example_prompt": "Give me a specific example of the last time you tried to start a conversation and it didn't go well.",
+                "confirmation": "Okay, so you're at a {rating}/10 on conversation initiation, mainly because {reason}. [✓ 1/5 skills assessed]"
+            },
+            {
+                "field": "maintenance_rating",
+                "setup": "Alright, now let's talk about keeping conversations alive.",
+                "question": "Rate 1-10: How good are you at moving past small talk into real conversation?",
+                "follow_up": "Where exactly does it die? After the opener? When you run out of questions? When they ask YOU something?",
+                "example_prompt": "Tell me about a recent conversation that just... fizzled out. What happened?",
+                "confirmation": "Got it - {rating}/10 on keeping conversations going. You struggle with {reason}. [✓ 2/5 skills assessed]"
+            },
+            {
+                "field": "nonverbal_rating",
+                "setup": "Let's move to the non-verbal stuff - body language, eye contact, physical presence.",
+                "question": "Rate 1-10: How confident are you in your body language and non-verbal communication?",
+                "follow_up": "What do you think you're doing wrong? Looking away too much? Crossing your arms? Standing too close or too far?",
+                "example_prompt": "What does your body usually do when you're nervous in social situations?",
+                "confirmation": "So {rating}/10 on non-verbal communication, and you're aware that {reason}. [✓ 3/5 skills assessed]"
+            },
+            {
+                "field": "awareness_rating",
+                "setup": "Now, social awareness - reading the room, picking up on cues.",
+                "question": "Rate 1-10: How good are you at knowing when someone's bored, wants to leave, or is genuinely interested?",
+                "follow_up": "What cues do you miss most? Them checking their phone? Short answers? Looking around the room?",
+                "example_prompt": "Tell me about a time you totally misread a social situation. What happened?",
+                "confirmation": "Okay, {rating}/10 on social awareness. You tend to miss {reason}. [✓ 4/5 skills assessed]"
+            },
+            {
+                "field": "regulation_rating",
+                "setup": "Last one - emotional regulation during social interactions.",
+                "question": "Rate 1-10: How well do you manage anxiety or nervousness when socializing?",
+                "follow_up": "What happens physically? Racing heart? Mind goes blank? Sweating? Voice shakes?",
+                "example_prompt": "When was the last time anxiety completely derailed a social interaction for you?",
+                "confirmation": "Got it - {rating}/10 on managing social anxiety, with symptoms like {reason}. [✓ 5/5 skills assessed - Assessment complete!]"
+            }
+        ]
+    },
+    3: {
+        "name": "Education",
+        "required_fields": ["understood_psychology", "understood_techniques", "recognized_mistakes", "chosen_technique", "confidence_level"],
+        "min_turns": 4,
+        "intro": "Now that I understand your challenges, let me teach you WHY this happens and what actually works. I'm going to explain the psychology, give you practical techniques, and make sure you really understand this before we move forward. Sound good?",
+        "checkpoints": [
+            {
+                "field": "understood_psychology",
+                "setup": "First, let's talk about the psychology behind what you're experiencing.",
+                "teaching": "[Explain the neuroscience/psychology relevant to their specific challenge]",
+                "check": "Does this make sense? Do you see how this explains what you've been experiencing?",
+                "confirmation": "Great - you understand the 'why' behind your challenge. [✓ 1/5 concepts covered]"
+            },
+            {
+                "field": "understood_techniques",
+                "setup": "Now let me give you the framework for how social skills actually work.",
+                "teaching": "Good conversation = Ask questions + Active listening + Sharing yourself. It's a rhythm, not a performance.",
+                "check": "Does this framework click for you?",
+                "confirmation": "Perfect - you've got the basic framework. [✓ 2/5 concepts covered]"
+            },
+            {
+                "field": "recognized_mistakes",
+                "setup": "Let's address the specific mistakes you're making.",
+                "teaching": "[Point out 2-3 specific mistakes from their Phase 2 examples and explain WHY these don't work]",
+                "check": "Have you noticed yourself doing these things?",
+                "confirmation": "Good awareness - recognizing the pattern is half the battle. [✓ 3/5 concepts covered]"
+            },
+            {
+                "field": "chosen_technique",
+                "setup": "Now, here are 2-3 specific techniques that will help with YOUR gaps.",
+                "teaching": "[Teach specific, actionable techniques for their skill gaps]",
+                "check": "Which of these techniques do you want to try first?",
+                "confirmation": "Excellent choice - {technique} is perfect for your situation. [✓ 4/5 concepts covered]"
+            },
+            {
+                "field": "confidence_level",
+                "setup": "One last thing about practice and growth.",
+                "teaching": "Discomfort = growth. Your first 10 conversations will feel awkward. That's not failure - that's your brain building new neural pathways. You've got the awareness, which is 50% of the battle.",
+                "check": "On a scale 1-10, how ready do you feel to start practicing?",
+                "confirmation": "You're at {rating}/10 - that's honest, and that's good. [✓ 5/5 concepts covered - Ready for goals!]"
+            }
+        ]
+    },
+    # ... continuing from where we left off in PHASE_CHECKPOINTS ...
+
+    4: {
+        "name": "Goal Setting",
+        "required_fields": ["week_1_goal", "week_1_confidence", "week_2_goal", "week_3_4_goal", "success_metric"],
+        "min_turns": 4,
+        "intro": "Time to turn this knowledge into action. Let's set 3 progressive goals for the next 4 weeks - each one building on the last. I'll suggest goals based on everything we've discussed, then we'll customize them together until they feel right. Sound good?",
+        "checkpoints": [
+            {
+                "field": "week_1_goal",
+                "setup": "Let's start with Week 1 - your foundation goal. Based on your primary weakness, here's what I'm thinking...",
+                "question": "[AI suggests specific SMART goal based on their primary_weakness from Phase 2]",
+                "follow_up": "Does this feel doable? Too easy? Too hard? Be honest.",
+                "confirmation": "Perfect - Week 1 goal locked in: {value}. [✓ 1/4 goals set]"
+            },
+            {
+                "field": "week_1_confidence",
+                "setup": "Quick confidence check on that Week 1 goal.",
+                "question": "On a scale 1-10, how confident are you that you'll complete it?",
+                "follow_up": "If below 7: Let's adjust it. What would make it more realistic?",
+                "confirmation": "{rating}/10 confidence - that's workable. Let's keep going. [✓ Confidence validated]"
+            },
+            {
+                "field": "week_2_goal",
+                "setup": "Week 2 - time to level up. This builds on Week 1...",
+                "question": "[AI suggests moderate goal that expands Week 1]",
+                "follow_up": "How does this feel? What concerns do you have?",
+                "confirmation": "Week 2 goal set: {value}. You're building momentum. [✓ 2/4 goals set]"
+            },
+            {
+                "field": "week_3_4_goal",
+                "setup": "Week 3-4 - your big integration goal. This is where it all comes together...",
+                "question": "[AI suggests meaningful goal integrating multiple skills]",
+                "follow_up": "Does this excite you or scare you? Both is fine.",
+                "confirmation": "Week 3-4 goal locked: {value}. This is your north star. [✓ 3/4 goals set]"
+            },
+            {
+                "field": "success_metric",
+                "setup": "Last thing - how will you KNOW you're succeeding?",
+                "question": "What would make you feel proud? What concrete signs would show progress?",
+                "follow_up": "Give me 2-3 specific, measurable signs of success.",
+                "confirmation": "Perfect success metrics: {value}. [✓ 4/4 complete - Goals finalized!]"
+            }
+        ]
+    },
+    5: {
+        "name": "Action Planning",
+        "required_fields": ["available_times", "practice_locations", "day_1_5_tasks", "commitment_level", "backup_plan"],
+        "min_turns": 3,
+        "intro": "Let's turn those goals into a concrete 5-day action plan. I'll create daily tasks that fit YOUR actual life - then we'll customize them. Each day builds on the last. Ready?",
+        "checkpoints": [
+            {
+                "field": "available_times",
+                "setup": "First, I need to understand your real schedule.",
+                "question": "What does a typical day look like? When do you actually have time for social practice?",
+                "follow_up": "Morning person or evening person? When's your energy highest?",
+                "confirmation": "Got it - you have time {value}. I'll design around that. [✓ 1/5 planning elements]"
+            },
+            {
+                "field": "practice_locations",
+                "setup": "Where will you have opportunities to practice?",
+                "question": "Work? Gym? Coffee shop? Grocery store? Where do you naturally encounter people?",
+                "follow_up": "Which location feels most comfortable to start?",
+                "confirmation": "Perfect - we'll use {value} as your practice grounds. [✓ 2/5 planning elements]"
+            },
+            {
+                "field": "day_1_5_tasks",
+                "setup": "Now let me create your 5-day plan. Day 1 will be easy to build confidence...",
+                "question": "[AI generates Day 1-5 tasks based on goals, schedule, and locations]\n\nHere's your full plan. What needs adjusting?",
+                "follow_up": "Does each day feel achievable? Any day feel too hard or too easy?",
+                "confirmation": "5-day plan customized and ready. [✓ 3/5 planning elements]"
+            },
+            {
+                "field": "commitment_level",
+                "setup": "Reality check time.",
+                "question": "On a scale 1-10, how committed are you to actually doing this plan?",
+                "follow_up": "If below 8: What's holding you back? What needs to change?",
+                "confirmation": "{rating}/10 commitment - I need you at 8+ to make this work. [✓ 4/5 planning elements]"
+            },
+            {
+                "field": "backup_plan",
+                "setup": "Last thing - what happens when life gets in the way?",
+                "question": "If you miss a day, what's the plan? Do you make it up? Skip it? Adjust?",
+                "follow_up": "Let's create a simple rule: Miss 1 day = jump back in. Miss 3 days = we troubleshoot together. Fair?",
+                "confirmation": "Backup plan set: {value}. You're ready. [✓ 5/5 planning complete!]"
+            }
+        ]
+    },
+    6: {
+        "name": "Accountability Setup",
+        "required_fields": ["tracking_method", "checkin_frequency", "checkin_time", "reminder_style", "start_date"],
+        "min_turns": 3,
+        "intro": "Final step! Let's set up your tracking and accountability system so you actually DO this. Research shows people who track progress are 3x more likely to succeed. Let's make it easy and sustainable. Ready?",
+        "checkpoints": [
+            {
+                "field": "tracking_method",
+                "setup": "How do you want to track your progress?",
+                "question": "Journal (write reflections)? App/Spreadsheet (check off tasks)? Voice notes (quick audio logs)? Combination?",
+                "follow_up": "Which would you ACTUALLY use every day? Be honest - what's worked for you in the past?",
+                "confirmation": "Tracking method: {value}. Simple and sustainable. [✓ 1/5 accountability elements]"
+            },
+            {
+                "field": "checkin_frequency",
+                "setup": "When do you want me to check in on your progress?",
+                "question": "Daily? Every 2 days? Weekly? What frequency keeps you accountable without being annoying?",
+                "follow_up": "Think about what would actually help you stay on track.",
+                "confirmation": "Check-in frequency: {value}. [✓ 2/5 accountability elements]"
+            },
+            {
+                "field": "checkin_time",
+                "setup": "What time of day works best for check-ins?",
+                "question": "Morning? Lunch? Evening? When can you actually reflect and respond?",
+                "follow_up": "So every {frequency} at {time}, I'll reach out. Sound good?",
+                "confirmation": "Check-in time: {value}. Locked in. [✓ 3/5 accountability elements]"
+            },
+            {
+                "field": "reminder_style",
+                "setup": "What style of support helps you most?",
+                "question": "Gentle ('friendly reminder')? Firm ('you committed to this')? Motivational ('you've got this!')? Mix?",
+                "follow_up": "What would actually keep you accountable when motivation is low?",
+                "confirmation": "Reminder style: {value}. I'll match your needs. [✓ 4/5 accountability elements]"
+            },
+            {
+                "field": "start_date",
+                "setup": "When do you want to officially start?",
+                "question": "Tomorrow? Monday? Specific date? When are you ready to commit?",
+                "follow_up": "Remember: You WILL miss days. That's normal. What matters is starting and getting back on track. When's Day 1?",
+                "confirmation": "Start date: {value}. Your journey begins then. [✓ 5/5 complete!]\n\nYou've done the hard work - you understand your challenges, have goals, a plan, and support. Now it's just about doing it. You don't have to be perfect - you just have to START. I'm here for you. Let's do this together."
+            }
+        ]
+    }
+}
+
+# ========== KEY FACTS EXTRACTION WITH CHECKPOINTS ==========
+
+def extract_key_facts_with_checkpoints(messages: List, phase: int, current_checkpoint_idx: int) -> Dict[str, Any]:
+    """
+    Extract key facts from conversation based on current phase checkpoints
+    Returns: {"facts": [...], "completed_checkpoints": {...}, "current_checkpoint": int}
+    """
     facts = []
+    completed_checkpoints = {}
     
-    # Look at last 6 messages for extractable facts
+    if phase not in PHASE_CHECKPOINTS:
+        return {"facts": facts, "completed_checkpoints": {}, "current_checkpoint": 0}
+    
+    phase_config = PHASE_CHECKPOINTS[phase]
+    checkpoints = phase_config.get("checkpoints", [])
+    
+    # Look at recent messages for extractable data
     recent = messages[-6:] if len(messages) > 6 else messages
     
     for msg in recent:
         if isinstance(msg, HumanMessage):
             content = msg.content.lower()
             
-            # Extract ratings
-            if any(str(i) in content for i in range(1, 11)):
-                for i in range(1, 11):
-                    if str(i) in content and len(content) < 50:
-                        facts.append(f"User gave rating: {i}")
+            # Extract ratings (1-10)
+            for i in range(1, 11):
+                if str(i) in content and ("rate" in content or "scale" in content or "/10" in content):
+                    facts.append(f"Rating given: {i}/10")
             
-            # Extract specific keywords
-            keywords = {
-                "anxiety": "User mentions anxiety",
-                "nervous": "User feels nervous",
-                "scared": "User experiences fear",
-                "awkward": "User feels awkward",
-                "embarrassed": "User feels embarrassed",
-                "small talk": "User struggles with small talk",
-                "eye contact": "User mentions eye contact issues",
-                "groups": "User has trouble in groups",
-                "one-on-one": "User prefers one-on-one",
-            }
+            # Extract specific keywords based on phase
+            if phase == 1:  # Discovery phase
+                keywords = {
+                    "anxiety": "emotion: anxiety",
+                    "nervous": "emotion: nervous",
+                    "work": "context: work",
+                    "party": "context: social events",
+                    "dating": "context: dating",
+                    "always": "frequency: always/chronic",
+                    "sometimes": "frequency: sometimes",
+                    "recently": "duration: recent"
+                }
+            elif phase == 2:  # Assessment phase
+                keywords = {
+                    "eye contact": "issue: eye contact",
+                    "small talk": "issue: small talk",
+                    "conversation": "issue: conversation flow",
+                    "freeze": "symptom: freezing",
+                    "blank": "symptom: mind goes blank"
+                }
+            else:
+                keywords = {}
             
             for keyword, fact in keywords.items():
                 if keyword in content:
                     facts.append(fact)
     
-    return list(set(facts))  # Remove duplicates
-
-# ========== HYPER-SPECIFIC PROMPTS ==========
-
-def build_jordan_prompt(phase: int, phase_data: Dict[str, Any], recent_messages: List, key_facts: List[str]) -> str:
-    """Build Jordan's system prompt with HYBRID MEMORY"""
+    # Track which checkpoints have been completed based on extracted facts
+    for idx, checkpoint in enumerate(checkpoints):
+        field = checkpoint.get("field")
+        # Simple heuristic: if we've had enough exchanges for this checkpoint, mark as potentially complete
+        if idx < current_checkpoint_idx:
+            completed_checkpoints[field] = "completed"
     
-    base_personality = """You are Jordan, an adaptive AI social skills coach. You're the SAME person throughout all phases.
+    return {
+        "facts": list(set(facts)),
+        "completed_checkpoints": completed_checkpoints,
+        "current_checkpoint": current_checkpoint_idx
+    }
+
+# ========== HYPER-SPECIFIC PROMPTS WITH CHECKPOINTS ==========
+
+def build_jordan_prompt(phase: int, phase_data: Dict[str, Any], recent_messages: List, 
+                       checkpoint_progress: Dict[str, Any]) -> str:
+    """Build Jordan's system prompt with CHECKPOINT AWARENESS"""
+    
+    base_personality = """You are Jordan, an adaptive AI social skills coach. You're warm, empathetic, and educational - but also purposeful and efficient.
 
 YOUR CORE TRAITS:
-- You LEAD the conversation - user follows YOUR script
-- Empathetic but direct when needed
-- Remember EVERYTHING from previous conversations
-- Interrupt tangents politely: "Hold that thought - first, answer this..."
-- Use "we" language - you're partners in this
+- You LEAD the conversation with clear structure
+- You're empathetic but direct when needed
+- You remember EVERYTHING from previous conversations
+- You explain WHY you're asking questions (builds trust)
+- You confirm understanding before moving forward
+- You track progress and celebrate small wins
+- You use "we" language - you're partners in this
+
+YOUR CONVERSATION STYLE:
+- Ask ONE focused question at a time
+- Explain the purpose: "I'm asking this because..."
+- Confirm their answer: "Got it - so you're saying..."
+- Show progress: "[✓ 2/5 checkpoints complete]"
+- Connect answers to next question naturally
+- Be warm but don't waste time on tangents
+- Redirect gently: "Hold that thought - first, let me understand..."
 
 """
     
@@ -431,13 +754,25 @@ YOUR CORE TRAITS:
         recent_context += "\n🔴 CRITICAL: If you just asked a question, the user's message is answering THAT question!\n"
         recent_context += "=== END IMMEDIATE MEMORY ===\n\n"
     
-    # ========== KEY FACTS EXTRACTED THIS PHASE ==========
-    facts_context = ""
-    if key_facts:
-        facts_context = "=== KEY FACTS EXTRACTED THIS PHASE ===\n"
-        for fact in key_facts:
-            facts_context += f"- {fact}\n"
-        facts_context += "=== END KEY FACTS ===\n\n"
+    # ========== CHECKPOINT PROGRESS ==========
+    checkpoint_context = ""
+    if checkpoint_progress:
+        current_checkpoint = checkpoint_progress.get("current_checkpoint", 0)
+        completed = checkpoint_progress.get("completed_checkpoints", {})
+        facts = checkpoint_progress.get("facts", [])
+        
+        checkpoint_context = f"""
+=== CHECKPOINT PROGRESS ===
+Current Phase: {phase}
+Current Checkpoint: {current_checkpoint + 1}
+Completed Checkpoints: {len(completed)}
+Facts Extracted: {len(facts)}
+
+Recent Facts:
+{chr(10).join(f"- {fact}" for fact in facts[-5:])}
+=== END CHECKPOINT PROGRESS ===
+
+"""
     
     # ========== STRUCTURED MEMORY: COMPLETED PHASES ==========
     structured_context = ""
@@ -448,7 +783,8 @@ YOUR CORE TRAITS:
 === PHASE 1 SUMMARY (Discovery) ===
 - Main Challenge: {diag.get('main_challenge')}
 - Emotional State: {diag.get('emotional_state')}
-- Where It Happens: {diag.get('context')}
+- Context: {diag.get('context')}
+- Frequency: {diag.get('frequency')}
 - Impact: {diag.get('impact')}
 - Backstory: {diag.get('backstory')}
 ===================================
@@ -497,423 +833,105 @@ YOUR CORE TRAITS:
 
 """
     
-    # ========== HYPER-SPECIFIC PHASE INSTRUCTIONS ==========
-    phase_instructions = {
-        1: """
-===========================================
-CURRENT PHASE: DISCOVERY (Diagnostic Listening)
-===========================================
-
-YOUR EXACT SCRIPT (Follow 70% strictly, adapt 30% as needed):
-
-STEP 1: Opening Warmth
-- If this is their first message, respond with empathy: "That sounds really hard. I'm here to help."
-- Then ask: "Tell me more - when did you first notice this was a problem?"
-
-STEP 2: Get Specificity (Critical!)
-- Ask ONE question at a time (max 60 words)
-- Required questions to ask (in any natural order):
-  1. "What EXACTLY happens when [their situation]? Walk me through a recent example."
-  2. "Where does this happen most? Work? Social events? Everywhere?"
-  3. "How does this make you FEEL? Anxious? Frustrated? Hopeless?"
-  4. "How is this affecting your life? Relationships? Career? Happiness?"
-  5. "How long has this been going on? Was there a trigger?"
-
-HANDLING VAGUE ANSWERS:
-- If they say "I'm just bad at talking to people" → Ask: "What specifically happens when you try to talk to someone?"
-- If they say "It's always been this way" → Ask: "Think back - was there a time it got worse? What changed?"
-- If they ramble → Politely interrupt: "That's helpful context. Now tell me specifically: [your question]"
-
-YOUR GOAL:
-After 5-8 exchanges, you should know:
-✓ Their SPECIFIC challenge (not "bad at socializing" but "freeze when trying to start conversations")
-✓ Emotional state (anxious, frustrated, etc.)
-✓ Primary context (at work, parties, dating, etc.)
-✓ Life impact (lost friendships, career issues, etc.)
-✓ Timeline and trigger (2 years since breakup, lifelong, etc.)
-
-COMPLETION CHECK:
-When you have all 5 pieces above, you're done. Don't drag it out.
-
-STRICTNESS: 7/10
-- Follow the script but adjust phrasing naturally
-- Redirect tangents: "Hold that - first tell me..."
-- ONE question per message
-""",
+    # ========== CURRENT PHASE CHECKPOINT INSTRUCTIONS ==========
+    phase_instruction = ""
+    if phase in PHASE_CHECKPOINTS:
+        config = PHASE_CHECKPOINTS[phase]
+        current_checkpoint = checkpoint_progress.get("current_checkpoint", 0)
+        checkpoints = config.get("checkpoints", [])
         
-        2: """
+        if current_checkpoint < len(checkpoints):
+            checkpoint = checkpoints[current_checkpoint]
+            
+            phase_instruction = f"""
 ===========================================
-CURRENT PHASE: ASSESSMENT (Skills Analysis)
+CURRENT PHASE: {config['name'].upper()}
 ===========================================
 
-YOUR EXACT SCRIPT (Follow 70% strictly):
+INTRO (use if just starting phase):
+{config.get('intro', '')}
 
-OPENING:
-"Now let's get tactical and identify exactly which skills need work. I'll ask you to rate 5 key areas, then we'll dig into examples. Ready?"
+CURRENT CHECKPOINT: {current_checkpoint + 1}/{len(checkpoints)}
+Field to extract: {checkpoint.get('field')}
 
-YOUR 5-STEP ASSESSMENT (DO NOT SKIP STEPS):
+YOUR SCRIPT FOR THIS CHECKPOINT:
+1. Setup: {checkpoint.get('setup', '')}
+2. Main Question: {checkpoint.get('question', '')}
+3. Why you're asking: {checkpoint.get('why', '')}
+4. Follow-up if needed: {checkpoint.get('follow_up', '')}
+5. Confirmation template: {checkpoint.get('confirmation', '')}
 
-STEP 1: Conversation Initiation
-- Ask: "Rate 1-10: How comfortable are you starting conversations with strangers?"
-- Wait for rating
-- Follow-up: "What EXACTLY stops you? Fear of rejection? Don't know what to say? Something else?"
-- Get: ONE specific example of last failed attempt
-- Don't move on until you have: Rating + Reason + Example
+RESPONSE LENGTH: 50-75 words max
 
-STEP 2: Conversation Maintenance
-- Ask: "Rate 1-10: Keeping conversations going past small talk."
-- Wait for rating
-- Follow-up: "Where exactly does it die? After the opener? When you run out of questions? When they ask YOU something?"
-- Get: Specific example of conversation fizzling out
-- Don't move on until you have: Rating + Point of failure + Example
+AFTER USER RESPONDS:
+- Confirm understanding using the confirmation template
+- Show progress: "[✓ {current_checkpoint + 1}/{len(checkpoints)} complete]"
+- Smoothly transition to next checkpoint
 
-STEP 3: Non-Verbal Communication
-- Ask: "Rate 1-10: Your body language, eye contact, and physical presence."
-- Wait for rating
-- Follow-up: "What do you think you're doing wrong? Looking away? Crossing arms? Standing too close/far?"
-- Get: What they believe their body language says
-- Don't move on until you have: Rating + Specific behavior + Example
-
-STEP 4: Social Awareness
-- Ask: "Rate 1-10: Reading social cues - knowing when someone's bored, wants to leave, or is interested."
-- Wait for rating
-- Follow-up: "What cues do you miss most? Them checking their phone? Short answers? Looking around?"
-- Get: Specific missed cue example
-- Don't move on until you have: Rating + Missed cues + Example
-
-STEP 5: Emotional Regulation
-- Ask: "Rate 1-10: Managing anxiety or nervousness during social interactions."
-- Wait for rating
-- Follow-up: "What happens physically? Racing heart? Mind goes blank? Sweating? Voice shakes?"
-- Get: Physiological symptoms
-- Don't move on until you have: Rating + Symptoms + When it's worst
-
-HANDLING RESISTANCE:
-- If they say "I don't know" → "Take a guess. What do you THINK happens?"
-- If they give vague answer → "Give me a SPECIFIC example from the last week."
-- If they go off-script → "Hold on - first give me that rating 1-10."
-- If they rate everything 10/10 → "Be honest - nobody's perfect. Where do you struggle MOST?"
-
-COMPLETION CHECK:
-You need all 5 ratings + reasons + examples. Don't finish until you have them.
-
-RESPONSE LENGTH: Max 50 words per message
+HANDLING OFF-TOPIC RESPONSES:
+- Gently redirect: "I hear you on that. But first, I need to understand [current question]"
+- Stay focused on extracting this checkpoint's data
+- You can acknowledge their point, but circle back immediately
 
 STRICTNESS: 7/10
-- Must complete all 5 steps in order
-- Can rephrase questions naturally
-- Redirect off-topic responses firmly but kindly
-""",
-        
-        3: """
-===========================================
-CURRENT PHASE: EDUCATION (Teaching)
-===========================================
-
-YOUR EXACT SCRIPT (Follow 70% strictly):
-
-OPENING:
-"Now that I understand your challenges, let me teach you WHY this happens and what actually works. Sound good?"
-
-YOUR TEACHING STRUCTURE:
-
-CONCEPT 1: The Psychology Behind Their Challenge
-- Explain WHY their specific issue happens
-- Use their primary weakness from Phase 2
-- Example: If they freeze when initiating → Explain amygdala hijack, fear of judgment
-- Keep it: 100-150 words, accessible language, NO jargon
-
-CONCEPT 2: How Social Skills Actually Work
-- Explain that social skills are LEARNABLE, not innate
-- Give framework: "Good conversation = Ask questions + Active listening + Sharing yourself"
-- Connect to their specific gaps
-- Ask: "Does this make sense so far?"
-
-CONCEPT 3: Common Mistakes (Their Mistakes)
-- Address 2-3 mistakes they're making (based on Phase 2 examples)
-- Explain WHY these mistakes happen
-- Example: "You said you run out of things to say - that's because you're trying to think of 'interesting' topics. That's the wrong approach. Here's why..."
-- Ask: "Have you noticed yourself doing this?"
-
-CONCEPT 4: Techniques That Work
-- Teach 2-3 specific techniques for THEIR gaps
-- Make it actionable: "Here's exactly what to do..."
-- Example: For conversation maintenance → "Use the 'Thread and Dive' technique: Pick one thing they said, ask a follow-up question about it."
-- Ask: "Want to try this? What questions do you have?"
-
-CONCEPT 5: The Science of Practice
-- Explain: Discomfort = growth, repetition builds neural pathways
-- Set expectations: "First 10 conversations will feel awkward. That's normal."
-- Encourage: "You've got the awareness - that's 50% of the battle."
-
-TEACHING STYLE:
-- Use analogies: "Think of it like..."
-- Reference their examples: "Remember when you said..."
-- Check understanding: "Make sense?"
-- Keep responses 100-150 words
-
-HANDLING QUESTIONS:
-- If they ask good questions → Answer thoroughly, then continue teaching
-- If they go off-topic → "Good question - let me finish this concept first, then we'll address that."
-
-COMPLETION CHECK:
-After teaching 5 concepts, ask: "Got it? Ready to set some goals based on this?"
-
-STRICTNESS: 7/10
-- Must teach all 5 concepts
-- Can adjust examples to their situation
-- Keep it conversational, not lecture-y
-""",
-        
-        4: """
-===========================================
-CURRENT PHASE: GOAL SETTING (Strategic Planning)
-===========================================
-
-YOUR EXACT SCRIPT (Follow 70% strictly):
-
-OPENING:
-"Time to turn this knowledge into action. Let's set 3 goals for the next 4 weeks - each one building on the last. I'll suggest goals based on everything we've discussed, then we'll customize them together. Sound good?"
-
-YOUR GOAL-SETTING PROCESS:
-
-STEP 1: Present Week 1 Goal (Foundation)
-- Create an EASY, confidence-building goal based on their PRIMARY weakness
-- Format: "Week 1 Goal: [Specific action] at least [X times] in [Context]"
-- Example: "Initiate 3 brief conversations with coworkers this week"
-- Make it: Specific, Measurable, Achievable, Relevant, Time-bound (SMART)
-- Ask: "Does this feel doable? Too easy? Too hard?"
-- Adjust based on feedback: If too hard → reduce number, if too easy → increase
-
-STEP 2: Present Week 2 Goal (Expansion)
-- Create a MODERATE goal that builds on Week 1
-- Should challenge them slightly more
-- Example: "Initiate 5 conversations AND keep 3 going past 2 minutes"
-- Ask: "How does this feel? What concerns do you have?"
-- Address concerns, adjust as needed
-
-STEP 3: Present Week 3-4 Goal (Integration)
-- Create a MEANINGFUL goal that shows real progress
-- Should integrate multiple skills
-- Example: "Have 3 deeper conversations (10+ min) where you share something personal"
-- Ask: "This is your big goal - does it excite you or scare you?"
-- If scared → break it down more, if excited → great!
-
-STEP 4: Define Success Metrics
-- Ask: "How will you KNOW you're succeeding? What would make you feel proud?"
-- Help them define 3-4 concrete metrics
-- Example: "I'll know I'm succeeding when: I feel less anxious, people ask for my number, I enjoy conversations"
-
-STEP 5: Reality Check
-- Ask: "What's going to be hardest about these goals?"
-- Ask: "What support do you need?"
-- Ask: "On a scale 1-10, how confident are you that you'll complete Week 1?"
-- If below 7 → adjust goals to be easier
-
-HANDLING PUSHBACK:
-- If they say goals are too ambitious → "You're right, let's scale back. What feels realistic?"
-- If they say goals are too easy → "Okay, let's add challenge. What would push you?"
-- If they want to skip Week 1 → "Trust me - we build foundation first, then scale up."
-
-COLLABORATION STYLE:
-- Use "we" language: "Let's adjust this..."
-- Validate concerns: "That's a fair concern..."
-- Push gently when needed: "I think you can do more than you think. What if we..."
-
-COMPLETION CHECK:
-When you have 3 agreed-upon goals + success metrics + confidence level 7+/10, you're done.
-
-RESPONSE LENGTH: 75-100 words per message
-
-STRICTNESS: 7/10
-- Must get buy-in on all 3 goals
-- Can adjust goals based on their feedback
-- Don't move to next phase until they're confident
-""",
-        
-        5: """
-===========================================
-CURRENT PHASE: ACTION PLANNING (Practical Tasks)
-===========================================
-
-YOUR EXACT SCRIPT (Follow 70% strictly):
-
-OPENING:
-"Let's turn those goals into a concrete 5-day action plan. I'll create daily tasks that fit YOUR life - then we'll customize them. Each day builds on the last. Ready?"
-
-YOUR PLANNING PROCESS:
-
-STEP 1: Understand Their Schedule
-- Ask: "What does a typical day look like? When do you have time for social practice?"
-- Ask: "Morning person or evening person?"
-- Ask: "Where will you have opportunities? Work? Gym? Coffee shop?"
-- Get specific answers before creating plan
-
-STEP 2: Present Day 1 Plan (Easiest Day)
-- Create 2-3 tasks for morning/afternoon/evening
-- Make it VERY doable - build confidence
-- Example:
-  Morning: "Make eye contact and smile at 3 people"
-  Afternoon: "Say 'hi' to one coworker you don't usually talk to"
-  Evening: "Reflect: How did it feel? What was hardest?"
-- Ask: "Does this fit your schedule? Feel doable?"
-- Adjust based on feedback
-
-STEP 3: Present Day 2-5 Plans (Progressive Difficulty)
-- Each day slightly harder than last
-- Build on previous day's tasks
-- Day 2: Add conversation initiation
-- Day 3: Add conversation maintenance
-- Day 4: Add personal sharing
-- Day 5: Integration day (use all skills)
-- After each day, ask: "Doable?"
-
-STEP 4: Add Reflection Prompts
-- Give 3-5 daily reflection questions:
-  * "What went well today?"
-  * "What felt uncomfortable? Why?"
-  * "What surprised you?"
-  * "What will you do differently tomorrow?"
-  * "Rate your confidence 1-10 today"
-- Ask: "Will you actually do these reflections? Be honest."
-
-STEP 5: Adjust to Reality
-- Ask: "What could derail this plan?"
-- Ask: "If you miss a day, what happens?"
-- Create makeup strategy: "If you miss Day 2, just do it on Day 3 and shift everything."
-- Ask: "What do you need from me to stay on track?"
-
-FLEXIBILITY POINTS:
-- If they have unpredictable schedule → Create "anytime" tasks
-- If they're extremely anxious → Make Week 1 easier
-- If they're motivated → Add stretch tasks as optional
-
-COMPLETION CHECK:
-When you have:
-✓ 5 days of customized tasks
-✓ Tasks fit their schedule
-✓ They feel it's achievable (7+/10 confidence)
-✓ Reflection prompts they'll actually use
-✓ Backup plan for missed days
-
-RESPONSE LENGTH: 60-80 words per message
-
-STRICTNESS: 7/10
-- Must create full 5-day plan
-- Must ensure it fits their real life
-- Can adjust difficulty level significantly
-""",
-        
-        6: """
-===========================================
-CURRENT PHASE: ACCOUNTABILITY SETUP (Support System)
-===========================================
-
-YOUR EXACT SCRIPT (Follow 70% strictly):
-
-OPENING:
-"Final step! Let's set up your tracking and accountability system so you actually DO this. Research shows people who track progress are 3x more likely to succeed. Let's make it easy. Ready?"
-
-YOUR SETUP PROCESS:
-
-STEP 1: Choose Tracking Method
-- Present options: "How do you want to track your progress?"
-  Option A: Journal (write daily reflections)
-  Option B: App/Spreadsheet (check off tasks)
-  Option C: Voice notes (quick audio logs)
-  Option D: Combination
-- Ask: "Which would you ACTUALLY use? Be honest."
-- If unsure → "What's worked for you in the past when tracking habits?"
-
-STEP 2: Set Check-In Schedule
-- Ask: "When do you want me to check in? Daily? Every 2 days? Weekly?"
-- Ask: "What time works best? Morning? Evening?"
-- Get specific: "So every [day] at [time], I'll ask 'How's it going?' - sound good?"
-
-STEP 3: Choose Reminder Style
-- Ask: "What style of support helps you most?"
-  Option A: Gentle ("Just a friendly reminder...")
-  Option B: Firm ("You committed to this. Did you do it?")
-  Option C: Motivational ("You've got this! Let's keep momentum!")
-- Ask: "Which would actually keep you accountable?"
-
-STEP 4: Define Support Needs
-- Ask: "What do you need when things get hard?"
-  * Troubleshooting help?
-  * Emotional support?
-  * Strategy adjustments?
-  * Tough love?
-- Ask: "What about when you succeed? Want celebration? Or just move forward?"
-
-STEP 5: Plan for Setbacks (Critical!)
-- Ask: "What happens if you miss a day? How do you want me to respond?"
-- Normalize: "You WILL miss days. That's normal. What matters is getting back on track."
-- Create rule: "If you miss 1 day → no big deal, jump back in. If you miss 3 days → we troubleshoot together. Sound fair?"
-
-STEP 6: First Check-In
-- Ask: "When do you want to officially start? Tomorrow? Monday?"
-- Confirm: "Okay so your first check-in is [Date] at [Time]. I'll ask how Day 1 went."
-- Ask: "Any last questions or concerns before we kick this off?"
-
-FINAL MOTIVATION:
-- Acknowledge their journey: "You've done the hard work - you understand your challenges, you have goals, you have a plan."
-- Encourage: "Now it's just about doing it. And you don't have to be perfect - you just have to START."
-- Ask: "How are you feeling right now? Nervous? Excited? Both?"
-- End with: "I'm here for you. Let's do this together."
-
-COMPLETION CHECK:
-When you have:
-✓ Tracking method chosen
-✓ Check-in schedule set
-✓ Reminder style confirmed
-✓ Support preferences defined
-✓ Setback plan agreed upon
-✓ Start date confirmed
-
-RESPONSE LENGTH: 50-75 words per message
-
-STRICTNESS: 7/10
-- Must set up complete accountability system
-- Can be flexible on specific choices
-- Should feel supportive, not rigid
+- Follow the checkpoint structure
+- Adjust phrasing to be natural and warm
+- Don't skip ahead or collect multiple checkpoints at once
 """
-    }
-    
-    return base_personality + recent_context + facts_context + structured_context + phase_instructions.get(phase, "")
+        else:
+            phase_instruction = f"""
+===========================================
+PHASE {phase} ({config['name']}) - COMPLETING
+===========================================
 
-# ========== PHASE COMPLETION DETECTION ==========
+All checkpoints collected! Time to:
+1. Summarize what you've learned about them
+2. Confirm everything is accurate
+3. Signal readiness to move to next phase
 
-def should_complete_phase(phase: int, messages: List, turn_count: int, key_facts: List[str]) -> bool:
-    """Determine if current phase has enough information to move forward"""
+Say something like:
+"Alright, I've got a complete picture now. Let me summarize what I've learned about you..."
+
+Then list the key points and ask: "Does that sound right? Anything I'm missing?"
+
+When they confirm, let them know they're ready for the next phase.
+"""
     
-    min_turns = {
-        1: 5,
-        2: 5,  # Need 5 ratings minimum
-        3: 4,
-        4: 4,
-        5: 3,
-        6: 3
-    }
+    return base_personality + recent_context + checkpoint_context + structured_context + phase_instruction
+
+# ========== PHASE COMPLETION DETECTION WITH CHECKPOINTS ==========
+
+def should_complete_phase(phase: int, checkpoint_progress: Dict[str, Any]) -> bool:
+    """Determine if current phase has collected all required checkpoints"""
     
-    if turn_count < min_turns.get(phase, 3):
+    if phase not in PHASE_CHECKPOINTS:
         return False
     
-    # Phase 2 specific: need at least 5 ratings in key_facts
-    if phase == 2:
-        rating_count = sum(1 for fact in key_facts if "rating" in fact.lower())
-        return rating_count >= 5
+    config = PHASE_CHECKPOINTS[phase]
+    required_fields = config.get("required_fields", [])
+    completed_checkpoints = checkpoint_progress.get("completed_checkpoints", {})
     
-    return True
+    # Check if all required fields are completed
+    all_complete = all(field in completed_checkpoints for field in required_fields)
+    
+    return all_complete
 
-# ========== STRUCTURED OUTPUT GENERATION ==========
+# ========== STRUCTURED OUTPUT GENERATION (FIXED) ==========
 
 def generate_phase_output(phase: int, messages: List, api_key: str, phase_data: Dict) -> Optional[BaseModel]:
-    """Generate structured output at the end of each phase"""
+    """Generate structured output at the end of each phase - FIXED VERSION"""
     
     conversation_text = "\n".join([
         f"{'User' if isinstance(msg, HumanMessage) else 'Jordan'}: {msg.content}"
-        for msg in messages[-15:]  # Last 15 messages for better context
+        for msg in messages[-15:]
     ])
+    
+    # Safely get nested values with default empty dicts
+    diagnostic_summary = phase_data.get('diagnostic_summary') or {}
+    skill_assessment = phase_data.get('skill_assessment') or {}
+    study_guide = phase_data.get('study_guide') or {}
+    goals = phase_data.get('goals') or {}
+    action_plan = phase_data.get('action_plan') or {}
     
     extraction_prompts = {
         1: f"""Based on this conversation, extract a diagnostic summary.
@@ -926,7 +944,8 @@ Extract:
 - emotional_state: Primary emotion (anxious, frustrated, hopeless, etc.)
 - context: Primary setting where this happens (work, parties, dating, etc.)
 - impact: Concrete life impact (lost job opportunities, no friends, etc.)
-- backstory: Timeline and trigger (2 years since breakup, lifelong, etc.)""",
+- backstory: Timeline and trigger (2 years since breakup, lifelong, etc.)
+- frequency: How often (daily, weekly, occasionally)""",
         
         2: f"""Based on this skills assessment conversation, extract specific skill gaps.
 
@@ -934,7 +953,7 @@ Conversation:
 {conversation_text}
 
 Previous Context:
-- Main Challenge: {phase_data.get('diagnostic_summary', {}).get('main_challenge', 'Unknown')}
+- Main Challenge: {diagnostic_summary.get('main_challenge', 'Unknown')}
 
 Extract:
 - skill_gaps: 3-5 SPECIFIC skills (e.g., "maintaining eye contact", NOT "communication")
@@ -948,8 +967,8 @@ Extract:
 Conversation:
 {conversation_text}
 
-User's Challenge: {phase_data.get('diagnostic_summary', {}).get('main_challenge', 'Unknown')}
-Skill Gaps: {', '.join(phase_data.get('skill_assessment', {}).get('skill_gaps', []))}
+User's Challenge: {diagnostic_summary.get('main_challenge', 'Unknown')}
+Skill Gaps: {', '.join(skill_assessment.get('skill_gaps', []))}
 
 Extract:
 - title: "[User's Challenge] Study Guide"
@@ -963,8 +982,8 @@ Conversation:
 {conversation_text}
 
 Context:
-- Challenge: {phase_data.get('diagnostic_summary', {}).get('main_challenge')}
-- Primary Weakness: {phase_data.get('skill_assessment', {}).get('primary_weakness')}
+- Challenge: {diagnostic_summary.get('main_challenge', 'Unknown')}
+- Primary Weakness: {skill_assessment.get('primary_weakness', 'Unknown')}
 
 Extract:
 - week_1_goal: {{"description": "...", "metric": "X times per week", "timeline": "Week 1"}}
@@ -978,11 +997,11 @@ Conversation:
 {conversation_text}
 
 Goals:
-- Week 1: {phase_data.get('goals', {}).get('week_1_goal', {}).get('description')}
+- Week 1: {goals.get('week_1_goal', {}).get('description', 'Not set')}
 
 Extract:
 - plan_title: "5-Day Action Plan for [Challenge]"
-- daily_tasks: [{{"day": 1, "morning": "...", "afternoon": "...", "evening": "..."}}, ...]
+- daily_tasks: [{{"day": 1, "morning": "...", "afternoon": "...", "evening": "...", "title": "Day 1 Theme"}}, ...]
 - reflection_prompts: Daily questions
 - difficulty_level: "easy", "moderate", or "challenging" based on tasks""",
         
@@ -1027,15 +1046,163 @@ Extract:
         print(f"Error generating structured output for phase {phase}: {e}")
         return None
 
-# ========== MAIN CHAT HANDLER ==========
+# ========== FIREBASE INTEGRATION ==========
+
+def extract_social_circle(context: str) -> str:
+    """Extract social circle type from context"""
+    context_lower = context.lower()
+    if "work" in context_lower or "colleague" in context_lower:
+        return "colleagues"
+    elif "date" in context_lower or "dating" in context_lower:
+        return "dating"
+    elif "family" in context_lower:
+        return "family"
+    else:
+        return "friends"
+
+def extract_today_goal(emotional_state: str) -> str:
+    """Extract today's goal from emotional state"""
+    state_lower = emotional_state.lower()
+    if "anxious" in state_lower or "nervous" in state_lower:
+        return "confidence"
+    elif "frustrated" in state_lower:
+        return "breakthrough"
+    elif "lonely" in state_lower:
+        return "connection"
+    else:
+        return "growth"
+
+def create_social_skills_course_document(session_state: Dict, user_id: str) -> str:
+    """
+    Create Firebase document at: users/{user_id}/courses/social_skills_XX
+    Returns the document ID created
+    """
+    
+    # Extract all phase data
+    diagnostic = session_state.get("diagnostic_summary") or {}
+    skills = session_state.get("skill_assessment") or {}
+    goals = session_state.get("goals") or {}
+    action_plan = session_state.get("action_plan") or {}
+    accountability = session_state.get("accountability_setup") or {}
+    
+    # Determine course number
+    user_ref = db.collection("users").document(user_id)
+    courses_ref = user_ref.collection("courses")
+    
+    # Find existing social_skills courses
+    existing = courses_ref.where("course_id", ">=", "social_skills").where("course_id", "<", "social_skillsz").get()
+    course_number = len(list(existing)) + 1
+    course_id = f"social_skills_{course_number:02d}"
+    
+    # Build tasks array from action_plan
+    tasks = []
+    daily_tasks = action_plan.get("daily_tasks", [])
+    
+    for day_idx, day_plan in enumerate(daily_tasks[:5], 1):
+        for task_idx, task_data in enumerate([
+            {"key": "morning", "time": "09:00", "bucket": "morning"},
+            {"key": "afternoon", "time": "14:00", "bucket": "afternoon"},
+            {"key": "evening", "time": "19:00", "bucket": "evening"}
+        ]):
+            task_text = day_plan.get(task_data["key"], "")
+            if task_text:
+                tasks.append({
+                    "id": f"day{day_idx}_task_{task_idx}",
+                    "title": f"Day {day_idx} - {task_data['bucket'].title()} Task",
+                    "description": task_text,
+                    "done": False,
+                    "xp": 0,
+                    "scheduled_time": task_data["time"],
+                    "time_of_day": task_data["bucket"],
+                    "type": "friend",
+                    "location": "Not specified",
+                    "estimatedTime": "unspecified",
+                    "comfortLevel": "unknown",
+                    "contextAnchor": None,
+                    "timeBucket": None
+                })
+    
+    # Build days array
+    days = []
+    start_date = datetime.now()
+    
+    for day_idx, day_plan in enumerate(daily_tasks[:5], 1):
+        day_date = start_date + timedelta(days=day_idx - 1)
+        
+        day_tasks = []
+        for task_idx, task_key in enumerate(["morning", "afternoon", "evening"], 1):
+            task_text = day_plan.get(task_key, "")
+            if task_text:
+                day_tasks.append({
+                    "task_number": task_idx,
+                    "description": task_text,
+                    "done": False
+                })
+        
+        days.append({
+            "day": day_idx,
+            "date": day_date.strftime("%Y-%m-%d"),
+            "title": day_plan.get("title", f"Day {day_idx}"),
+            "tasks": day_tasks,
+            "completed": True if day_idx == 1 else False
+        })
+    
+    # Build the complete document
+    course_doc = {
+        "course_id": course_id,
+        "user_id": user_id,
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "generated_at": firestore.SERVER_TIMESTAMP,
+        
+        # User's main goal from Phase 4
+        "goal_name": goals.get("week_1_goal", {}).get("description", "Social Skills Improvement"),
+        
+        # Course metadata
+        "is_mock_plan": False,
+        "streak": 1,
+        
+        # Tasks overview
+        "task_overview": {
+            "days": days,
+            "tasks": tasks
+        },
+        
+        # User profile from diagnostic
+        "userProfile": {
+            "socialCircle": extract_social_circle(diagnostic.get("context", "")),
+            "todayGoal": extract_today_goal(diagnostic.get("emotional_state", "")),
+            "comfort": diagnostic.get("emotional_state", ""),
+            "dailyInteractions": diagnostic.get("context", "")
+        },
+        
+        # Store all Jordan session data for reference
+        "jordan_session_data": {
+            "diagnostic_summary": diagnostic,
+            "skill_assessment": skills,
+            "goals": goals,
+            "action_plan": action_plan,
+            "accountability_setup": accountability
+        },
+        
+        "xp": 0
+    }
+    
+    # Write to Firestore
+    doc_ref = courses_ref.document(course_id)
+    doc_ref.set(course_doc)
+    
+    return course_id
+
+# ========== MAIN CHAT HANDLER WITH CHECKPOINTS ==========
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    """Main chat endpoint with HYBRID MEMORY"""
+    """Main chat endpoint with CHECKPOINT-DRIVEN conversation"""
     data = request.json or {}
     session_id = data.get("session_id")
     user_message = data.get("message", "")
     api_key = data.get("api_key")
+    user_id = data.get("user_id", "anonymous")
     
     if not session_id or not api_key:
         return jsonify({"error": "session_id and api_key required"}), 400
@@ -1046,8 +1213,8 @@ def chat():
             "phase": 1,
             "messages": [],
             "turn_count": 0,
-            "key_facts": [],
-            "user_id": data.get("user_id", "anonymous"),
+            "current_checkpoint": 0,
+            "user_id": user_id,
             "api_key": api_key,
             "created_at": datetime.now().isoformat(),
             
@@ -1058,75 +1225,81 @@ def chat():
             "goals": None,
             "action_plan": None,
             "accountability_setup": None,
+	    # Continuation of the /chat endpoint from line 1148
+
+            # Checkpoint tracking
+            "checkpoint_progress": {
+                "facts": [],
+                "completed_checkpoints": {},
+                "current_checkpoint": 0
+            }
         }
-        
-        # Send initial greeting
-        phase = sessions[session_id]["phase"]
-        greeting = get_jordan_greeting(phase)
-        sessions[session_id]["messages"].append(AIMessage(content=greeting))
-        
-        return jsonify({
-            "response": greeting,
-            "phase": phase,
-            "session_id": session_id,
-            "phase_complete": False
-        })
     
-    # Get current state
-    state = sessions[session_id]
-    phase = state["phase"]
-    messages = state["messages"]
+    session_state = sessions[session_id]
     
     # Add user message
-    messages.append(HumanMessage(content=user_message))
-    state["turn_count"] += 1
+    session_state["messages"].append(HumanMessage(content=user_message))
+    session_state["turn_count"] += 1
     
-    # Extract key facts from recent conversation
-    new_facts = extract_key_facts(messages, phase)
-    state["key_facts"].extend(new_facts)
-    state["key_facts"] = list(set(state["key_facts"]))  # Remove duplicates
+    # Extract facts and update checkpoint progress
+    checkpoint_progress = extract_key_facts_with_checkpoints(
+        session_state["messages"],
+        session_state["phase"],
+        session_state["current_checkpoint"]
+    )
     
-    # Build phase data for context
-    phase_data = {
-        "diagnostic_summary": state.get("diagnostic_summary"),
-        "skill_assessment": state.get("skill_assessment"),
-        "study_guide": state.get("study_guide"),
-        "goals": state.get("goals"),
-        "action_plan": state.get("action_plan"),
-    }
+    # Update session checkpoint progress
+    session_state["checkpoint_progress"] = checkpoint_progress
     
-    # Build Jordan's prompt with HYBRID MEMORY
+    # Build Jordan's prompt with checkpoint awareness
     system_prompt = build_jordan_prompt(
-        phase=phase,
-        phase_data=phase_data,
-        recent_messages=messages,
-        key_facts=state["key_facts"]
+        phase=session_state["phase"],
+        phase_data=session_state,
+        recent_messages=session_state["messages"],
+        checkpoint_progress=checkpoint_progress
+    )
+    
+    # Create chat prompt template
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder(variable_name="messages")
+    ])
+    
+    # Initialize LLM
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        temperature=0.7,
+        groq_api_key=api_key
     )
     
     # Generate response
+    chain = prompt | llm
+    
     try:
-        llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0.7,
-            groq_api_key=api_key
-        )
+        response = chain.invoke({
+            "messages": session_state["messages"][-10:]  # Last 10 messages for context
+        })
         
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="messages"),
-        ])
+        jordan_message = response.content
+        session_state["messages"].append(AIMessage(content=jordan_message))
         
-        chain = prompt | llm
-        response = chain.invoke({"messages": messages[-8:]})  # Only send last 8 messages to avoid token limit
-        messages.append(response)
+        # Check if checkpoint was completed (look for checkpoint markers in response)
+        if "[✓" in jordan_message or "complete]" in jordan_message.lower():
+            session_state["current_checkpoint"] += 1
+            checkpoint_progress["current_checkpoint"] = session_state["current_checkpoint"]
         
         # Check if phase should complete
-        phase_complete = should_complete_phase(phase, messages, state["turn_count"], state["key_facts"])
+        phase_complete = should_complete_phase(session_state["phase"], checkpoint_progress)
         
         # Generate structured output if phase is complete
         structured_output = None
         if phase_complete:
-            structured_output = generate_phase_output(phase, messages, api_key, phase_data)
+            structured_output = generate_phase_output(
+                session_state["phase"], 
+                session_state["messages"], 
+                api_key, 
+                session_state
+            )
             
             # Store structured output
             output_keys = {
@@ -1138,19 +1311,21 @@ def chat():
                 6: "accountability_setup"
             }
             
-            if structured_output and phase in output_keys:
-                state[output_keys[phase]] = structured_output.model_dump()
+            if structured_output and session_state["phase"] in output_keys:
+                session_state[output_keys[session_state["phase"]]] = structured_output.model_dump()
         
-        sessions[session_id] = state
+        # Save session state
+        sessions[session_id] = session_state
         
         return jsonify({
-            "response": response.content,
-            "phase": phase,
+            "response": jordan_message,
+            "phase": session_state["phase"],
             "session_id": session_id,
-            "turn_count": state["turn_count"],
+            "turn_count": session_state["turn_count"],
+            "current_checkpoint": session_state["current_checkpoint"],
             "phase_complete": phase_complete,
             "structured_data": structured_output.model_dump() if structured_output else None,
-            "key_facts_count": len(state["key_facts"])
+            "checkpoint_progress": checkpoint_progress
         })
         
     except Exception as e:
@@ -1162,77 +1337,105 @@ def chat():
 
 @app.route("/transition", methods=["POST"])
 def transition_phase():
-    """Transition to next phase with full context"""
+    """Transition to next phase after completing current phase"""
     data = request.json or {}
     session_id = data.get("session_id")
     
     if not session_id or session_id not in sessions:
         return jsonify({"error": "Invalid session_id"}), 400
     
-    state = sessions[session_id]
-    old_phase = state["phase"]
+    session_state = sessions[session_id]
+    old_phase = session_state["phase"]
     new_phase = old_phase + 1
     
     if new_phase > 6:
-        return jsonify({"error": "Already at final phase"}), 400
+        # All phases complete - create Firebase document
+        try:
+            user_id = session_state.get("user_id", "anonymous")
+            course_id = create_social_skills_course_document(session_state, user_id)
+            
+            return jsonify({
+                "message": "Program complete! Course created in Firebase.",
+                "course_id": course_id,
+                "user_id": user_id,
+                "phase": 6,
+                "program_complete": True
+            })
+        except Exception as e:
+            return jsonify({"error": f"Failed to create course: {str(e)}"}), 500
     
-    # Update phase, reset turn count and key_facts for new phase
-    state["phase"] = new_phase
-    state["turn_count"] = 0
-    state["key_facts"] = []  # Reset key facts for new phase
+    # Update phase and reset checkpoint tracking
+    session_state["phase"] = new_phase
+    session_state["turn_count"] = 0
+    session_state["current_checkpoint"] = 0
+    session_state["checkpoint_progress"] = {
+        "facts": [],
+        "completed_checkpoints": {},
+        "current_checkpoint": 0
+    }
     
-    # Get greeting with context
-    greeting = get_jordan_greeting(new_phase, state)
-    state["messages"].append(AIMessage(content=greeting))
+    # Get intro message for new phase
+    if new_phase in PHASE_CHECKPOINTS:
+        intro_message = PHASE_CHECKPOINTS[new_phase].get("intro", "Let's continue.")
+        session_state["messages"].append(AIMessage(content=intro_message))
     
-    sessions[session_id] = state
+    sessions[session_id] = session_state
     
     return jsonify({
-        "response": greeting,
+        "response": intro_message if new_phase in PHASE_CHECKPOINTS else "Let's continue.",
         "old_phase": old_phase,
         "new_phase": new_phase,
         "session_id": session_id,
         "message": f"Transitioned to Phase {new_phase}"
     })
 
-# ========== PHASE GREETINGS ==========
+# ========== COMPLETE PROGRAM ENDPOINT ==========
 
-def get_jordan_greeting(phase: int, state: Dict = None) -> str:
-    """Get Jordan's greeting with context from previous phases"""
+@app.route("/complete_program", methods=["POST"])
+def complete_program():
+    """Manually trigger program completion and Firebase document creation"""
+    data = request.json or {}
+    session_id = data.get("session_id")
     
-    base_greetings = {
-        1: "Hi! I'm Jordan, your social skills coach. I'm here to listen and understand what you're going through. This is a safe space. What brings you here today?",
-        2: "Alright, let's shift gears. Time to get tactical and pinpoint exactly which skills need work. I'll walk you through 5 key areas. Ready to dive in?",
-        3: "Now that I understand your challenges, let me teach you the science behind why this happens and what actually works. Sound good?",
-        4: "Time to set some concrete goals! I'll help you create 3 clear, achievable targets based on everything we've learned. Let's build this together.",
-        5: "Let's turn those goals into action! I'll create a customized 5-day plan that fits YOUR life. Ready?",
-        6: "Final step! Let's set up your tracking and accountability system so you can actually crush this. How do you want to stay on track?"
-    }
+    if not session_id or session_id not in sessions:
+        return jsonify({"error": "Invalid session_id"}), 400
     
-    greeting = base_greetings.get(phase, "Hey! How can I help?")
+    session_state = sessions[session_id]
     
-    # Add context if available
-    if state and phase > 1:
-        if phase == 2 and state.get("diagnostic_summary"):
-            challenge = state["diagnostic_summary"].get("main_challenge", "")
-            greeting += f" I know you've been struggling with {challenge.lower()}. Let's figure out the exact skills we need to work on."
-        
-        elif phase == 3 and state.get("skill_assessment"):
-            primary = state["skill_assessment"].get("primary_weakness", "")
-            greeting += f" Your primary challenge is {primary.lower()}. Let me explain why that happens and what we can do about it."
-        
-        elif phase == 4 and state.get("study_guide"):
-            concepts = state["study_guide"].get("key_concepts", [])
-            greeting += f" Now that you understand the key concepts, let's turn that knowledge into concrete goals."
-        
-        elif phase == 5 and state.get("goals"):
-            week1 = state["goals"].get("week_1_goal", {}).get("description", "")
-            greeting += f" You've got solid goals set. Let's break them down into daily actions you can actually do."
-        
-        elif phase == 6 and state.get("action_plan"):
-            greeting += " Your plan is ready. Let's make sure you have the support and tracking system to actually execute it."
+    # Verify all phases are complete
+    required_data = [
+        "diagnostic_summary",
+        "skill_assessment", 
+        "study_guide",
+        "goals",
+        "action_plan",
+        "accountability_setup"
+    ]
     
-    return greeting
+    missing_data = [key for key in required_data if not session_state.get(key)]
+    
+    if missing_data:
+        return jsonify({
+            "error": "Cannot complete program - missing data from phases",
+            "missing": missing_data
+        }), 400
+    
+    try:
+        user_id = session_state.get("user_id", "anonymous")
+        course_id = create_social_skills_course_document(session_state, user_id)
+        
+        return jsonify({
+            "message": "Program complete! Course created successfully.",
+            "course_id": course_id,
+            "user_id": user_id,
+            "firebase_path": f"users/{user_id}/courses/{course_id}",
+            "program_complete": True
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to create course: {str(e)}"}), 500
 
 # ========== SESSION MANAGEMENT ==========
 
@@ -1247,15 +1450,18 @@ def get_session(session_id):
         "session_id": session_id,
         "phase": state["phase"],
         "turn_count": state["turn_count"],
+        "current_checkpoint": state.get("current_checkpoint", 0),
         "message_count": len(state["messages"]),
-        "key_facts_count": len(state.get("key_facts", [])),
         "created_at": state["created_at"],
-        "diagnostic_summary": state.get("diagnostic_summary"),
-        "skill_assessment": state.get("skill_assessment"),
-        "study_guide": state.get("study_guide"),
-        "goals": state.get("goals"),
-        "action_plan": state.get("action_plan"),
-        "accountability_setup": state.get("accountability_setup"),
+        "checkpoint_progress": state.get("checkpoint_progress", {}),
+        "phase_data": {
+            "diagnostic_summary": state.get("diagnostic_summary"),
+            "skill_assessment": state.get("skill_assessment"),
+            "study_guide": state.get("study_guide"),
+            "goals": state.get("goals"),
+            "action_plan": state.get("action_plan"),
+            "accountability_setup": state.get("accountability_setup"),
+        }
     })
 
 @app.route("/reset/<session_id>", methods=["POST"])
@@ -1280,7 +1486,8 @@ def export_session(session_id):
         "created_at": state["created_at"],
         "current_phase": state["phase"],
         "total_turns": state["turn_count"],
-        "key_facts_extracted": state.get("key_facts", []),
+        "current_checkpoint": state.get("current_checkpoint", 0),
+        "checkpoint_progress": state.get("checkpoint_progress", {}),
         "conversation_history": [
             {
                 "role": "user" if isinstance(msg, HumanMessage) else "jordan",
@@ -1311,6 +1518,23 @@ def health_check():
         "timestamp": datetime.now().isoformat()
     })
 
+@app.route("/", methods=["GET"])
+def home():
+    """Home endpoint"""
+    return jsonify({
+        "message": "Jordan AI Social Skills Coach API",
+        "version": "2.0 - Checkpoint System",
+        "endpoints": {
+            "chat": "POST /chat",
+            "transition": "POST /transition",
+            "complete_program": "POST /complete_program",
+            "get_session": "GET /session/<session_id>",
+            "reset_session": "POST /reset/<session_id>",
+            "export_session": "GET /export/<session_id>",
+            "health": "GET /health"
+        }
+    })
+
 # ========== DEBUG ENDPOINT ==========
 
 @app.route("/debug/<session_id>", methods=["GET"])
@@ -1325,7 +1549,8 @@ def debug_session(session_id):
         "session_id": session_id,
         "phase": state["phase"],
         "turn_count": state["turn_count"],
-        "key_facts": state.get("key_facts", []),
+        "current_checkpoint": state.get("current_checkpoint", 0),
+        "checkpoint_progress": state.get("checkpoint_progress", {}),
         "last_5_messages": [
             {
                 "role": "user" if isinstance(msg, HumanMessage) else "jordan",
