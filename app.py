@@ -382,42 +382,42 @@ PHASE_CHECKPOINTS = {
                 "setup": "First, let's get specific about what you're struggling with.",
                 "question": "What exactly happens when you try to [interact socially]? Walk me through a recent example.",
                 "why": "I need the specifics because 'bad at socializing' could mean a hundred different things. The more specific we are, the better I can help.",
-                "confirmation": "Got it - so the core challenge is: {value}. Let me make sure I understand..."
+                "confirmation": "Got it - so the core challenge is: {{value}}. Let me make sure I understand..."
             },
             {
                 "field": "context",
                 "setup": "Now, where does this happen most?",
                 "question": "Is this at work? Social events? Dating? Family gatherings? Where do you struggle most?",
                 "why": "Different contexts need different strategies, so I need to know where to focus.",
-                "confirmation": "Okay, so this primarily shows up in {value} situations."
+                "confirmation": "Okay, so this primarily shows up in {{value}} situations."
             },
             {
                 "field": "frequency",
                 "setup": "Let's talk about how often this happens.",
                 "question": "Is this a daily thing? Weekly? Only in specific situations?",
                 "why": "Frequency tells me how urgent this is and how much practice opportunity you have.",
-                "confirmation": "So this happens {value}. That's important context."
+                "confirmation": "So this happens {{value}}. That's important context."
             },
             {
                 "field": "duration",
                 "setup": "How long has this been going on?",
                 "question": "Has this always been an issue, or did something trigger it? When did it start or get worse?",
                 "why": "Understanding the timeline helps me see if this is a lifelong pattern or something situational we can address.",
-                "confirmation": "Alright, so this has been happening for {value}."
+                "confirmation": "Alright, so this has been happening for {{value}}."
             },
             {
                 "field": "emotion",
                 "setup": "Let's talk about how this makes you feel.",
                 "question": "When you're in these situations, what's the dominant emotion? Anxious? Frustrated? Embarrassed? Hopeless?",
                 "why": "Your emotional response is just as important as the behavior - it tells me what's driving this.",
-                "confirmation": "I hear you - you're feeling {value}. That makes complete sense given what you're dealing with."
+                "confirmation": "I hear you - you're feeling {{value}}. That makes complete sense given what you're dealing with."
             },
             {
                 "field": "consequence",
                 "setup": "Last piece - and this is important.",
                 "question": "How is this actually affecting your life? What have you lost or missed because of this?",
                 "why": "This is your 'why' - the reason we're doing this work. I need to understand what's at stake.",
-                "confirmation": "So the real impact is: {value}. That's what we're going to change."
+                "confirmation": "So the real impact is: {{value}}. That's what we're going to change."
             }
         ]
     },
@@ -433,7 +433,7 @@ PHASE_CHECKPOINTS = {
                 "question": "On a scale 1-10, how comfortable are you initiating conversations with strangers or people you don't know well?",
                 "follow_up": "What exactly stops you? Fear of rejection? Don't know what to say? Something else?",
                 "example_prompt": "Give me a specific example of the last time you tried to start a conversation and it didn't go well.",
-                "confirmation": "Okay, so you're at a {rating}/10 on conversation initiation, mainly because {reason}. [✓ 1/5 skills assessed]"
+                "confirmation": "Okay, so you're at a {{rating}}/10 on conversation initiation, mainly because {{reason}}. [✓ 1/5 skills assessed]"
             },
             {
                 "field": "maintenance_rating",
@@ -441,7 +441,7 @@ PHASE_CHECKPOINTS = {
                 "question": "Rate 1-10: How good are you at moving past small talk into real conversation?",
                 "follow_up": "Where exactly does it die? After the opener? When you run out of questions? When they ask YOU something?",
                 "example_prompt": "Tell me about a recent conversation that just... fizzled out. What happened?",
-                "confirmation": "Got it - {rating}/10 on keeping conversations going. You struggle with {reason}. [✓ 2/5 skills assessed]"
+                "confirmation": "Got it - {{rating}}/10 on keeping conversations going. You struggle with {{reason}}. [✓ 2/5 skills assessed]"
             },
             {
                 "field": "nonverbal_rating",
@@ -449,7 +449,7 @@ PHASE_CHECKPOINTS = {
                 "question": "Rate 1-10: How confident are you in your body language and non-verbal communication?",
                 "follow_up": "What do you think you're doing wrong? Looking away too much? Crossing your arms? Standing too close or too far?",
                 "example_prompt": "What does your body usually do when you're nervous in social situations?",
-                "confirmation": "So {rating}/10 on non-verbal communication, and you're aware that {reason}. [✓ 3/5 skills assessed]"
+                "confirmation": "So {{rating}}/10 on non-verbal communication, and you're aware that {{reason}}. [✓ 3/5 skills assessed]"
             },
             {
                 "field": "awareness_rating",
@@ -457,7 +457,7 @@ PHASE_CHECKPOINTS = {
                 "question": "Rate 1-10: How good are you at knowing when someone's bored, wants to leave, or is genuinely interested?",
                 "follow_up": "What cues do you miss most? Them checking their phone? Short answers? Looking around the room?",
                 "example_prompt": "Tell me about a time you totally misread a social situation. What happened?",
-                "confirmation": "Okay, {rating}/10 on social awareness. You tend to miss {reason}. [✓ 4/5 skills assessed]"
+                "confirmation": "Okay, {{rating}}/10 on social awareness. You tend to miss {{reason}}. [✓ 4/5 skills assessed]"
             },
             {
                 "field": "regulation_rating",
@@ -465,7 +465,7 @@ PHASE_CHECKPOINTS = {
                 "question": "Rate 1-10: How well do you manage anxiety or nervousness when socializing?",
                 "follow_up": "What happens physically? Racing heart? Mind goes blank? Sweating? Voice shakes?",
                 "example_prompt": "When was the last time anxiety completely derailed a social interaction for you?",
-                "confirmation": "Got it - {rating}/10 on managing social anxiety, with symptoms like {reason}. [✓ 5/5 skills assessed - Assessment complete!]"
+                "confirmation": "Got it - {{rating}}/10 on managing social anxiety, with symptoms like {{reason}}. [✓ 5/5 skills assessed - Assessment complete!]"
             }
         ]
     },
@@ -501,19 +501,17 @@ PHASE_CHECKPOINTS = {
                 "setup": "Now, here are 2-3 specific techniques that will help with YOUR gaps.",
                 "teaching": "[Teach specific, actionable techniques for their skill gaps]",
                 "check": "Which of these techniques do you want to try first?",
-                "confirmation": "Excellent choice - {technique} is perfect for your situation. [✓ 4/5 concepts covered]"
+                "confirmation": "Excellent choice - {{technique}} is perfect for your situation. [✓ 4/5 concepts covered]"
             },
             {
                 "field": "confidence_level",
                 "setup": "One last thing about practice and growth.",
                 "teaching": "Discomfort = growth. Your first 10 conversations will feel awkward. That's not failure - that's your brain building new neural pathways. You've got the awareness, which is 50% of the battle.",
                 "check": "On a scale 1-10, how ready do you feel to start practicing?",
-                "confirmation": "You're at {rating}/10 - that's honest, and that's good. [✓ 5/5 concepts covered - Ready for goals!]"
+                "confirmation": "You're at {{rating}}/10 - that's honest, and that's good. [✓ 5/5 concepts covered - Ready for goals!]"
             }
         ]
     },
-    # ... continuing from where we left off in PHASE_CHECKPOINTS ...
-
     4: {
         "name": "Goal Setting",
         "required_fields": ["week_1_goal", "week_1_confidence", "week_2_goal", "week_3_4_goal", "success_metric"],
@@ -525,35 +523,35 @@ PHASE_CHECKPOINTS = {
                 "setup": "Let's start with Week 1 - your foundation goal. Based on your primary weakness, here's what I'm thinking...",
                 "question": "[AI suggests specific SMART goal based on their primary_weakness from Phase 2]",
                 "follow_up": "Does this feel doable? Too easy? Too hard? Be honest.",
-                "confirmation": "Perfect - Week 1 goal locked in: {value}. [✓ 1/4 goals set]"
+                "confirmation": "Perfect - Week 1 goal locked in: {{value}}. [✓ 1/4 goals set]"
             },
             {
                 "field": "week_1_confidence",
                 "setup": "Quick confidence check on that Week 1 goal.",
                 "question": "On a scale 1-10, how confident are you that you'll complete it?",
                 "follow_up": "If below 7: Let's adjust it. What would make it more realistic?",
-                "confirmation": "{rating}/10 confidence - that's workable. Let's keep going. [✓ Confidence validated]"
+                "confirmation": "{{rating}}/10 confidence - that's workable. Let's keep going. [✓ Confidence validated]"
             },
             {
                 "field": "week_2_goal",
                 "setup": "Week 2 - time to level up. This builds on Week 1...",
                 "question": "[AI suggests moderate goal that expands Week 1]",
                 "follow_up": "How does this feel? What concerns do you have?",
-                "confirmation": "Week 2 goal set: {value}. You're building momentum. [✓ 2/4 goals set]"
+                "confirmation": "Week 2 goal set: {{value}}. You're building momentum. [✓ 2/4 goals set]"
             },
             {
                 "field": "week_3_4_goal",
                 "setup": "Week 3-4 - your big integration goal. This is where it all comes together...",
                 "question": "[AI suggests meaningful goal integrating multiple skills]",
                 "follow_up": "Does this excite you or scare you? Both is fine.",
-                "confirmation": "Week 3-4 goal locked: {value}. This is your north star. [✓ 3/4 goals set]"
+                "confirmation": "Week 3-4 goal locked: {{value}}. This is your north star. [✓ 3/4 goals set]"
             },
             {
                 "field": "success_metric",
                 "setup": "Last thing - how will you KNOW you're succeeding?",
                 "question": "What would make you feel proud? What concrete signs would show progress?",
                 "follow_up": "Give me 2-3 specific, measurable signs of success.",
-                "confirmation": "Perfect success metrics: {value}. [✓ 4/4 complete - Goals finalized!]"
+                "confirmation": "Perfect success metrics: {{value}}. [✓ 4/4 complete - Goals finalized!]"
             }
         ]
     },
@@ -568,14 +566,14 @@ PHASE_CHECKPOINTS = {
                 "setup": "First, I need to understand your real schedule.",
                 "question": "What does a typical day look like? When do you actually have time for social practice?",
                 "follow_up": "Morning person or evening person? When's your energy highest?",
-                "confirmation": "Got it - you have time {value}. I'll design around that. [✓ 1/5 planning elements]"
+                "confirmation": "Got it - you have time {{value}}. I'll design around that. [✓ 1/5 planning elements]"
             },
             {
                 "field": "practice_locations",
                 "setup": "Where will you have opportunities to practice?",
                 "question": "Work? Gym? Coffee shop? Grocery store? Where do you naturally encounter people?",
                 "follow_up": "Which location feels most comfortable to start?",
-                "confirmation": "Perfect - we'll use {value} as your practice grounds. [✓ 2/5 planning elements]"
+                "confirmation": "Perfect - we'll use {{value}} as your practice grounds. [✓ 2/5 planning elements]"
             },
             {
                 "field": "day_1_5_tasks",
@@ -589,14 +587,14 @@ PHASE_CHECKPOINTS = {
                 "setup": "Reality check time.",
                 "question": "On a scale 1-10, how committed are you to actually doing this plan?",
                 "follow_up": "If below 8: What's holding you back? What needs to change?",
-                "confirmation": "{rating}/10 commitment - I need you at 8+ to make this work. [✓ 4/5 planning elements]"
+                "confirmation": "{{rating}}/10 commitment - I need you at 8+ to make this work. [✓ 4/5 planning elements]"
             },
             {
                 "field": "backup_plan",
                 "setup": "Last thing - what happens when life gets in the way?",
                 "question": "If you miss a day, what's the plan? Do you make it up? Skip it? Adjust?",
                 "follow_up": "Let's create a simple rule: Miss 1 day = jump back in. Miss 3 days = we troubleshoot together. Fair?",
-                "confirmation": "Backup plan set: {value}. You're ready. [✓ 5/5 planning complete!]"
+                "confirmation": "Backup plan set: {{value}}. You're ready. [✓ 5/5 planning complete!]"
             }
         ]
     },
@@ -611,35 +609,35 @@ PHASE_CHECKPOINTS = {
                 "setup": "How do you want to track your progress?",
                 "question": "Journal (write reflections)? App/Spreadsheet (check off tasks)? Voice notes (quick audio logs)? Combination?",
                 "follow_up": "Which would you ACTUALLY use every day? Be honest - what's worked for you in the past?",
-                "confirmation": "Tracking method: {value}. Simple and sustainable. [✓ 1/5 accountability elements]"
+                "confirmation": "Tracking method: {{value}}. Simple and sustainable. [✓ 1/5 accountability elements]"
             },
             {
                 "field": "checkin_frequency",
                 "setup": "When do you want me to check in on your progress?",
                 "question": "Daily? Every 2 days? Weekly? What frequency keeps you accountable without being annoying?",
                 "follow_up": "Think about what would actually help you stay on track.",
-                "confirmation": "Check-in frequency: {value}. [✓ 2/5 accountability elements]"
+                "confirmation": "Check-in frequency: {{value}}. [✓ 2/5 accountability elements]"
             },
             {
                 "field": "checkin_time",
                 "setup": "What time of day works best for check-ins?",
                 "question": "Morning? Lunch? Evening? When can you actually reflect and respond?",
-                "follow_up": "So every {frequency} at {time}, I'll reach out. Sound good?",
-                "confirmation": "Check-in time: {value}. Locked in. [✓ 3/5 accountability elements]"
+                "follow_up": "So every {{frequency}} at {{time}}, I'll reach out. Sound good?",
+                "confirmation": "Check-in time: {{value}}. Locked in. [✓ 3/5 accountability elements]"
             },
             {
                 "field": "reminder_style",
                 "setup": "What style of support helps you most?",
                 "question": "Gentle ('friendly reminder')? Firm ('you committed to this')? Motivational ('you've got this!')? Mix?",
                 "follow_up": "What would actually keep you accountable when motivation is low?",
-                "confirmation": "Reminder style: {value}. I'll match your needs. [✓ 4/5 accountability elements]"
+                "confirmation": "Reminder style: {{value}}. I'll match your needs. [✓ 4/5 accountability elements]"
             },
             {
                 "field": "start_date",
                 "setup": "When do you want to officially start?",
                 "question": "Tomorrow? Monday? Specific date? When are you ready to commit?",
                 "follow_up": "Remember: You WILL miss days. That's normal. What matters is starting and getting back on track. When's Day 1?",
-                "confirmation": "Start date: {value}. Your journey begins then. [✓ 5/5 complete!]\n\nYou've done the hard work - you understand your challenges, have goals, a plan, and support. Now it's just about doing it. You don't have to be perfect - you just have to START. I'm here for you. Let's do this together."
+                "confirmation": "Start date: {{value}}. Your journey begins then. [✓ 5/5 complete!]\n\nYou've done the hard work - you understand your challenges, have goals, a plan, and support. Now it's just about doing it. You don't have to be perfect - you just have to START. I'm here for you. Let's do this together."
             }
         ]
     }
