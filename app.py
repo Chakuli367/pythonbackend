@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TypedDict, Annotated, Literal
 from flask_cors import cross_origin
+from openai import OpenAI
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
