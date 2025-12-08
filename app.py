@@ -7,14 +7,20 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TypedDict, Annotated, Literal
 from flask_cors import cross_origin
 
-# Third-party
-from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from openai import OpenAI
+from datetime import datetime, timedelta
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage
+import json
+import re
+
+
+# Third-party
+from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import requests
-
 import firebase_admin
 from firebase_admin import credentials, firestore, initialize_app
 
@@ -322,17 +328,7 @@ def parse_story_analysis(analysis_text):
         }
 
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from datetime import datetime, timedelta
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage, AIMessage
-import json
-import re
 
-app = Flask(__name__)
-CORS(app)
 
 # Initialize Firebase (assuming you have this set up)
 # from firebase_admin import credentials, firestore, initialize_app
