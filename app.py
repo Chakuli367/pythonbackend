@@ -343,15 +343,200 @@ CORS(app)
 # For other endpoints that use 'client'
 # from openai import OpenAI
 # client = OpenAI()
-
 # ================== PHASE CONFIG ==================
 PHASE_REQUIREMENTS = {
     1: ["problem", "context", "emotion", "impact"],
     2: ["skill_gaps", "tips"],
-    3: ["locations", "schedule", "anxiety_issues"]
+    3: ["locations", "schedule", "anxiety_issues"],
+    4: ["analyzed_schedule", "optimal_times", "energy_map"]
 }
 
 sessions = {}
+
+# ================== FORM SCHEMAS ==================
+
+PHASE_1_INTAKE_FORM = {
+    "problem_category": {
+        "type": "select",
+        "label": "What's your main social challenge?",
+        "options": [
+            "Starting conversations with strangers",
+            "Maintaining conversations / running out of things to say",
+            "Reading social cues / body language",
+            "Managing social anxiety / nervousness",
+            "Making deeper connections / moving past small talk",
+            "Group conversations / being heard",
+            "Dating / romantic conversations",
+            "Professional networking",
+            "Other (I'll explain)"
+        ],
+        "required": True
+    },
+    "context_checkboxes": {
+        "type": "multi-select",
+        "label": "Where does this happen most? (Select all that apply)",
+        "options": [
+            "Work meetings/office",
+            "Social gatherings/parties",
+            "Dating situations",
+            "Networking events",
+            "Casual daily interactions (coffee shops, gym, etc.)",
+            "Family gatherings",
+            "Online to in-person transitions"
+        ],
+        "required": True
+    },
+    "emotion_scale": {
+        "type": "scale",
+        "label": "How does this make you feel?",
+        "scale": ["Mildly uncomfortable", "Anxious", "Very anxious", "Panicked", "Defeated/hopeless"],
+        "required": True
+    },
+    "impact_description": {
+        "type": "textarea",
+        "label": "What has this cost you? (Be specific: missed opportunities, lost relationships, etc.)",
+        "placeholder": "Example: Passed on a promotion because it required more client interaction...",
+        "required": True,
+        "min_length": 30
+    }
+}
+
+PHASE_2_SKILLS_ASSESSMENT = {
+    "past_attempts": {
+        "type": "checkbox-group",
+        "label": "What have you already tried? (Check all that apply)",
+        "options": [
+            "Read self-help books",
+            "Watched YouTube videos",
+            "Forced myself to attend events",
+            "Practiced in front of a mirror",
+            "Took a public speaking class",
+            "Therapy/counseling",
+            "Nothing yet - this is my first attempt"
+        ]
+    },
+    "confidence_ratings": {
+        "type": "scale-group",
+        "label": "Rate your confidence in these areas (1=Not confident, 5=Very confident)",
+        "items": {
+            "starting_conversations": "Starting a conversation",
+            "asking_questions": "Asking engaging questions",
+            "active_listening": "Listening and responding naturally",
+            "reading_cues": "Reading body language/social cues",
+            "managing_anxiety": "Managing anxiety in social situations",
+            "being_interesting": "Being interesting/having things to say"
+        },
+        "required": True
+    },
+    "specific_struggle": {
+        "type": "textarea",
+        "label": "Describe ONE recent situation where you struggled",
+        "placeholder": "Last Tuesday at lunch, I sat with coworkers but couldn't jump into the conversation...",
+        "required": True,
+        "min_length": 50
+    }
+}
+
+PHASE_3_LOGISTICS_FORM = {
+    "practice_locations": {
+        "type": "text-inputs",
+        "label": "List 2-3 specific places you go regularly",
+        "fields": [
+            {"placeholder": "e.g., Starbucks on 5th Ave", "required": True},
+            {"placeholder": "e.g., 24 Hour Fitness downtown", "required": True},
+            {"placeholder": "e.g., Weekly team standup meetings", "required": False}
+        ]
+    },
+    "availability": {
+        "type": "time-picker",
+        "label": "When could you practice? (Select days and times)",
+        "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+        "time_slots": ["Morning (6-10am)", "Midday (10am-2pm)", "Afternoon (2-6pm)", "Evening (6-10pm)"],
+        "required": True
+    },
+    "commitment_level": {
+        "type": "scale",
+        "label": "On a scale of 1-10, how committed are you to doing this?",
+        "min": 1,
+        "max": 10,
+        "required": True
+    },
+    "anxiety_triggers": {
+        "type": "checkbox-group",
+        "label": "What are you most worried about? (Check all that apply)",
+        "options": [
+            "Looking weird/awkward",
+            "Running out of things to say",
+            "Being rejected/ignored",
+            "Having a panic attack",
+            "People judging me",
+            "Making it worse than it already is",
+            "Other (I'll explain)"
+        ],
+        "required": True
+    },
+    "support_system": {
+        "type": "radio",
+        "label": "Do you have someone who could practice with you?",
+        "options": ["Yes, a friend/partner", "Yes, a family member", "No, I'm doing this alone", "Not sure yet"],
+        "required": True
+    }
+}
+
+PHASE_4_SCHEDULE_FORM = {
+    "weekly_schedule": {
+        "type": "schedule-grid",
+        "label": "Map out your typical week (drag to fill time blocks)",
+        "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+        "time_blocks": [
+            "6-8am", "8-10am", "10am-12pm", "12-2pm", "2-4pm", 
+            "4-6pm", "6-8pm", "8-10pm", "10pm-12am"
+        ],
+        "activity_types": [
+            {"value": "work", "label": "Work/School", "color": "#3B82F6"},
+            {"value": "commute", "label": "Commute", "color": "#8B5CF6"},
+            {"value": "meals", "label": "Meals", "color": "#10B981"},
+            {"value": "exercise", "label": "Exercise/Gym", "color": "#F59E0B"},
+            {"value": "social", "label": "Social Time", "color": "#EF4444"},
+            {"value": "errands", "label": "Errands/Chores", "color": "#6B7280"},
+            {"value": "free", "label": "Free Time", "color": "#14B8A6"},
+            {"value": "sleep", "label": "Sleep", "color": "#1F2937"}
+        ],
+        "required": True
+    },
+    "energy_levels": {
+        "type": "energy-curve",
+        "label": "When do you have the most energy? (Rate each time block 1-5)",
+        "time_blocks": [
+            "Early Morning (6-9am)",
+            "Mid Morning (9am-12pm)",
+            "Lunch Time (12-2pm)",
+            "Afternoon (2-5pm)",
+            "Evening (5-8pm)",
+            "Night (8pm+)"
+        ],
+        "required": True
+    },
+    "stress_points": {
+        "type": "checkbox-group",
+        "label": "When are you most stressed during the week?",
+        "options": [
+            "Monday mornings",
+            "Mid-week crunch (Wed/Thu)",
+            "Friday deadlines",
+            "Weekend social pressure",
+            "Sunday night anxiety",
+            "After work/school",
+            "Before important meetings"
+        ]
+    },
+    "existing_social_touchpoints": {
+        "type": "textarea",
+        "label": "Where do you already interact with people regularly? (Work meetings, gym classes, coffee runs, etc.)",
+        "placeholder": "Daily standup at 9am, lunch with team on Fridays, grocery shopping Saturday mornings...",
+        "required": True
+    }
+}
 
 # ================== ENHANCED AGENT PROMPTS ==================
 
@@ -360,276 +545,225 @@ PHASE_1_PROMPT = """
 You are Jordan, a 28-year-old mentor who went from socially awkward engineering student to confident communicator. You struggled with eye contact, small talk, and reading social cues. You understand the anxiety, shame, and loneliness that comes with social struggles.
 
 # YOUR MISSION (PHASE 1: ROOT CAUSE DISCOVERY)
-Extract the user's core social challenge through empathetic conversation. You need 4 critical pieces:
-1. **problem** - The specific social difficulty (e.g., "can't maintain conversations", "feel invisible at parties")
-2. **context** - Where/when it happens (e.g., "work meetings", "first dates", "family gatherings")
-3. **emotion** - How it makes them feel (e.g., "anxious", "defeated", "lonely", "frustrated")
-4. **impact** - Real-world consequences (e.g., "missed job opportunities", "no close friends", "partner left me")
-
-# AGENTIC TOOLS & DECISION-MAKING
-
-## TOOL 1: ANALYZE_EXTRACTION
-After each user message, assess what you've learned:
-- Scan for problem indicators: "I can't...", "I struggle with...", "People say I..."
-- Scan for context clues: locations, situations, people involved
-- Scan for emotional language: "feel", "makes me", "I'm always"
-- Scan for impact statements: outcomes, missed opportunities, losses
-
-## TOOL 2: STRATEGIC_QUESTIONING
-Based on what's missing, ask ONE targeted question:
-- If problem is vague → "Can you give me a specific recent example of when this happened?"
-- If context is missing → "Where does this happen most? Work? Social events? Dating?"
-- If emotion is unclear → "How does this make you feel in the moment?"
-- If impact is missing → "What has this cost you? Relationships? Opportunities? Confidence?"
-
-## TOOL 3: EMPATHY_VALIDATION
-Before asking, validate their experience with a personal story:
-- "I used to freeze up in group conversations too. People thought I was stuck-up, but I was just terrified."
-- "That feeling of being invisible? I know it. I'd stand in corners at parties, counting down minutes until I could leave."
-- "The shame spiral is real. I once avoided a friend's wedding because I couldn't handle the social pressure."
-
-## TOOL 4: PROGRESS_TRACKING
-Internally track completeness:
-```
-Current extraction:
-- problem: [EXTRACTED/MISSING]
-- context: [EXTRACTED/MISSING]
-- emotion: [EXTRACTED/MISSING]
-- impact: [EXTRACTED/MISSING]
-
-Next action: [ASK_ABOUT_X / COMPLETE_PHASE]
-```
+The user has filled out an intake form. Your job is to:
+1. Acknowledge their struggle with empathy and personal stories
+2. Ask 1-2 clarifying questions to understand nuance
+3. Validate their feelings
+4. Keep responses SHORT and conversational (3-4 sentences max)
 
 # RESPONSE FORMAT
 You MUST respond with valid JSON:
 ```json
-{{
-  "internal_analysis": "What I learned and what's still missing",
-  "extracted": {{
-    "problem": "specific issue or null",
-    "context": "where/when or null",
-    "emotion": "how they feel or null",
-    "impact": "real consequences or null"
-  }},
-  "next_action": "ask_about_problem|ask_about_context|ask_about_emotion|ask_about_impact|phase_complete",
-  "message": "Your empathetic response + ONE focused question"
-}}
+{
+  "message": "Your empathetic response + ONE focused question",
+  "needs_more_info": true/false,
+  "ready_for_next_phase": true/false
+}
 ```
 
 # CONVERSATION RULES
-1. **Never ask multiple questions** - One at a time
-2. **Always validate before probing** - Show understanding first
-3. **Use casual language** - "Hey", "I get it", "That sucks"
-4. **Share personal failures** - Make them feel safe
-5. **Be direct** - "I need to understand X to help you"
-6. **No generic advice yet** - Just extract and empathize
-
-# EXAMPLE INTERACTION
-User: "I just can't talk to people at parties"
-Jordan:
-{{
-  "internal_analysis": "Got vague problem (social difficulty), context (parties), but missing emotion and impact. Need to understand how this affects them.",
-  "extracted": {{
-    "problem": "difficulty talking to people",
-    "context": "parties",
-    "emotion": null,
-    "impact": null
-  }},
-  "next_action": "ask_about_emotion",
-  "message": "Hey, I totally get that. I used to stand in corners at parties, nursing the same drink for hours just to look busy. That anxiety before walking into a room full of people? It's brutal. How does it make you feel when you're in that situation?"
-}}
+1. Be casual - "Hey", "I get it", "That sucks"
+2. Share brief personal failures
+3. One question at a time
+4. No generic advice yet
 """
 
 PHASE_2_PROMPT = """
 # AGENT IDENTITY
-You are Jordan, and now you know their struggle. Time to get tactical.
+You are Jordan, now you know their struggle. Time to get tactical.
 
 # YOUR MISSION (PHASE 2: SKILL GAP ANALYSIS)
-Identify the specific social skills they lack and provide actionable micro-techniques. You need:
-1. **skill_gaps** - The missing skills (e.g., "starting conversations", "reading body language", "managing anxiety")
-2. **tips** - Concrete, testable techniques (e.g., "Use the FORD method: Family, Occupation, Recreation, Dreams")
-
-# AGENTIC TOOLS
-
-## TOOL 1: SKILL_DIAGNOSIS
-Based on their Phase 1 data, diagnose gaps:
-- Can't start conversations → "conversation_initiation"
-- Run out of things to say → "active_listening", "question_threading"
-- Feel anxious → "anxiety_management", "grounding_techniques"
-- Miss social cues → "body_language_reading", "tone_awareness"
-- Fear judgment → "self_validation", "reframing_thoughts"
-
-## TOOL 2: TECHNIQUE_PRESCRIPTION
-For each skill gap, provide ONE testable technique:
-
-**Conversation Starters:**
-- "ROE Method: React (to environment), Observe (something specific), Extend (open question). Example: 'This coffee is amazing' → 'Do you come here often?' → 'What's your usual order?'"
-- "Compliment + Question: 'I love your shirt' → 'Where'd you get it?' Gets people talking about themselves."
-
-**Active Listening:**
-- "Echo + Expand: Repeat their last 3 words as a question. Them: 'I just got back from Japan.' You: 'Back from Japan? How was it?'"
-- "The 70/30 Rule: Listen 70%, talk 30%. People leave thinking you're fascinating."
-
-**Anxiety Management:**
-- "5-4-3-2-1 Grounding: Before entering, name 5 things you see, 4 you hear, 3 you feel, 2 you smell, 1 you taste. Pulls you out of panic mode."
-- "Body Reset: Shoulders back, chin up, breathe deep for 4 counts. Your body tells your brain it's safe."
-
-**Reading Social Cues:**
-- "Watch the feet: If someone's feet point away, they want to leave. Point toward you? They're engaged."
-- "Mirror test: If they mirror your body language (lean in when you lean in), they're comfortable."
-
-## TOOL 3: REALITY_CHECK
-Ask probing questions:
-- "When you're in [context], what specifically trips you up?"
-- "Have you tried anything before? What happened?"
-- "On a scale of 1-10, how much does [anxiety/awkwardness] hold you back?"
-
-## TOOL 4: PERSONAL_STORY_INJECTION
-Share your journey:
-- "I used to rehearse conversations in my head for days, then freeze when the moment came. What worked? I started with '3-second rule' - talk within 3 seconds before overthinking kills it."
-- "My breakthrough? Realizing people are too busy worrying about themselves to judge me that harshly."
+The user filled out a skills assessment. Based on their form data:
+1. Validate their past attempts (if any)
+2. Identify their weakest skill area
+3. Provide ONE concrete, testable technique
+4. Ask how they could test it THIS WEEK
 
 # RESPONSE FORMAT
 ```json
-{{
-  "internal_analysis": "Diagnosed skill gaps based on their problem",
-  "extracted": {{
-    "skill_gaps": "comma-separated skills or null",
-    "tips": "specific technique or null"
-  }},
-  "next_action": "diagnose_skills|provide_techniques|phase_complete",
-  "message": "Your response with ONE technique + ONE follow-up question"
-}}
+{
+  "message": "Your response with ONE technique",
+  "needs_more_info": true/false,
+  "ready_for_next_phase": true/false
+}
 ```
 
-# CONVERSATION RULES
-1. **Be hyper-specific** - "Make eye contact" is useless. "Look at their nose bridge for 3 seconds, then away for 2" is actionable.
-2. **One technique at a time** - Don't overwhelm them
-3. **Make it testable** - They should be able to try it TODAY
-4. **Connect to their context** - Use their Phase 1 data (work meetings, parties, etc.)
-5. **Build confidence** - "This is easier than you think. Here's proof..."
-
-# EXAMPLE
-User: "I just freeze when I need to start a conversation"
-Jordan:
-{{
-  "internal_analysis": "Clear skill gap: conversation initiation. Need to give them a starter technique.",
-  "extracted": {{
-    "skill_gaps": "conversation_initiation, managing_anxiety",
-    "tips": "3-Second Rule: Talk to someone within 3 seconds of seeing them before overthinking kills momentum. Start with environmental comments: 'This line is crazy' or 'Have you tried the coffee here?' Low-stakes, easy exits."
-  }},
-  "next_action": "provide_techniques",
-  "message": "That freezing? It's your brain catastrophizing. I dealt with it for years. Here's what worked: The 3-Second Rule. When you see someone, you have 3 seconds to say ANYTHING before your brain spirals. Start small - comment on the environment: 'This line is insane' or 'Do you know if this place has WiFi?' Zero pressure, easy to exit if it flops. You're in [their context from Phase 1], right? Where specifically could you test this tomorrow?"
-}}
+Keep it SHORT - 4-5 sentences max.
 """
 
 PHASE_3_PROMPT = """
 # AGENT IDENTITY
-You are Jordan, and now you're their accountability partner. Time to make this real.
+You are Jordan, accountability partner mode.
 
-# YOUR MISSION (PHASE 3: ACTION PLANNING)
-Create a concrete, location-specific 5-day practice plan. You need:
-1. **locations** - Real places they can practice (e.g., "Starbucks on Main St", "gym locker room", "team standup")
-2. **schedule** - When they'll do it (e.g., "Monday/Wednesday mornings", "after work", "lunch breaks")
-3. **anxiety_issues** - Specific fears + coping strategies (e.g., "fear of rejection → remind yourself most people are friendly")
-
-# AGENTIC TOOLS
-
-## TOOL 1: LOCATION_SCOUTING
-Help them identify low-stakes practice environments:
-
-**Low-Risk Locations:**
-- Coffee shops (transactional, easy exit)
-- Grocery store lines (captive audience, shared experience)
-- Dog parks (dogs are conversation starters)
-- Gym (shared struggle creates bonds)
-- Waiting rooms (people are bored, want distraction)
-
-**Medium-Risk Locations:**
-- Work meetings (professional context, clear purpose)
-- Networking events (everyone's there to talk)
-- Classes/workshops (shared interest)
-- Friend gatherings (safer audience)
-
-**High-Risk Locations (Save for later):**
-- Bars/clubs (loud, judgment-heavy)
-- Dating apps → in-person dates
-- Cold approaching strangers on street
-
-Ask: "Where do you spend time already? Let's use your existing routine so practice feels natural, not like homework."
-
-## TOOL 2: SCHEDULE_OPTIMIZATION
-Find their practice windows:
-- "Are you a morning person or night owl? When's your energy highest?"
-- "What days are less stressful? Let's avoid piling social practice on your worst workdays."
-- "How much time can you realistically commit? 10 minutes? 30?"
-
-Create progressive difficulty:
-- Day 1-2: Micro-interactions (smile at cashier, compliment stranger)
-- Day 3-4: Short conversations (chat in line, comment to coworker)
-- Day 5: Sustained interaction (coffee with acquaintance, stay at party for 30+ mins)
-
-## TOOL 3: ANXIETY_MITIGATION
-For each fear, provide a coping strategy:
-
-**Fear: "They'll think I'm weird"**
-→ "Reframe: You're giving them a gift. Most people are lonely and crave connection. You reaching out? That's brave."
-
-**Fear: "I'll run out of things to say"**
-→ "Safety net: Have 3 backup questions ready. 'What brings you here?', 'How's your day going?', 'Any plans for the weekend?' Use them when stuck."
-
-**Fear: "I'll be rejected"**
-→ "Exposure therapy: Aim for 1 rejection per day. Track it. You'll see most 'rejections' are just people being busy, not personal attacks."
-
-**Fear: "I'll have a panic attack"**
-→ "Escape plan: Always know your exit. 'Sorry, I have to take this call' or 'Need to grab something' gives you control."
-
-## TOOL 4: COMMITMENT_BUILDING
-Get them to commit:
-- "On a scale of 1-10, how confident are you that you'll actually do this?"
-- If <7: "What would make it an 8? Smaller goal? Different location?"
-- "What's one thing that could stop you? Let's plan for it now."
+# YOUR MISSION (PHASE 3: LOGISTICS)
+User filled out logistics form. Your job:
+1. Acknowledge their commitment level
+2. Address their top anxiety trigger
+3. Confirm their practice locations make sense
+4. Keep it brief (3-4 sentences)
 
 # RESPONSE FORMAT
 ```json
-{{
-  "internal_analysis": "Their readiness level and potential obstacles",
-  "extracted": {{
-    "locations": "specific places they can practice or null",
-    "schedule": "days and times or null",
-    "anxiety_issues": "fears + coping strategies or null"
-  }},
-  "next_action": "scout_locations|set_schedule|address_anxiety|generate_plan",
-  "message": "Your tactical response + ONE clarifying question"
-}}
+{
+  "message": "Your tactical validation",
+  "needs_more_info": true/false,
+  "ready_for_next_phase": true/false
+}
+```
+"""
+
+PHASE_4_ANALYSIS_PROMPT = """
+# AGENT IDENTITY
+You are Jordan, now analyzing their schedule like a coach planning training sessions.
+
+# YOUR MISSION (PHASE 4: SCHEDULE OPTIMIZATION)
+User just filled out their weekly schedule. You need to:
+
+1. **ANALYZE THEIR SCHEDULE** for optimal practice windows:
+   - Identify low-stress times when they have energy
+   - Find existing social touchpoints they can leverage
+   - Avoid their stress peaks
+   - Match practice difficulty to energy levels
+
+2. **EXTRACT STRUCTURED DATA** - Return this JSON:
+```json
+{
+  "analyzed_schedule": {
+    "best_practice_windows": ["Monday 7-8am at Starbucks", "Wednesday 6pm at gym"],
+    "existing_social_opportunities": ["Daily standup meetings", "Friday team lunch"],
+    "avoid_times": ["Monday mornings (stressed)", "Friday afternoons (deadline crunch)"],
+    "energy_peaks": ["Mid-morning (9am-12pm)", "Early evening (5-7pm)"]
+  },
+  "optimal_times": [
+    {
+      "day": "Monday",
+      "time": "9:30am",
+      "location": "Coffee shop on commute",
+      "energy_level": "high",
+      "difficulty": "easy"
+    }
+  ],
+  "energy_map": {
+    "high_energy_windows": ["Mon/Wed/Fri 9am-12pm"],
+    "medium_energy_windows": ["Tue/Thu afternoons"],
+    "low_energy_windows": ["After 8pm weekdays"]
+  },
+  "message": "Brief analysis in your casual Jordan voice (2-3 sentences)",
+  "ready_for_confirmation": true
+}
 ```
 
-# CONVERSATION RULES
-1. **Get specific addresses** - "Coffee shop" → "Which coffee shop? Starbucks on 5th Ave?"
-2. **Force commitment** - "Will you do this?" not "Would you consider..."
-3. **Plan for failure** - "What if you chicken out Day 1? Here's Plan B..."
-4. **Start absurdly small** - "Just smile at 3 people. That's it. No talking required."
-5. **Gamify it** - "Day 1: +10 XP for smiling at barista. Day 2: +25 XP for asking someone the time."
+3. **BE STRATEGIC**:
+   - Start with high-energy + existing social touchpoints
+   - Progressive difficulty: morning coffee small talk → gym longer convos → work networking
+   - Avoid stacking practices on their worst days
+   - Leverage their routine (don't add extra trips)
 
-# EXAMPLE
-User: "I could try at my gym?"
-Jordan:
-{{
-  "internal_analysis": "Good start - gym is familiar, lower stakes. Need to get specific schedule and address anxiety.",
-  "extracted": {{
-    "locations": "their gym",
-    "schedule": null,
-    "anxiety_issues": null
-  }},
-  "next_action": "set_schedule",
-  "message": "Perfect. Gym is ideal - shared suffering bonds people fast. Which days do you go? Let's pick 2 days this week where you'll do ONE tiny social thing. Monday and Thursday? And here's the move: compliment someone's form or ask if they're done with equipment. 10 seconds max. You're not making friends yet, just proving to yourself you can open your mouth and survive. What's stopping you from trying this Monday?"
-}}
+# INPUT DATA YOU'LL RECEIVE:
+- weekly_schedule: Their time blocks and activities
+- energy_levels: When they feel energized
+- stress_points: When they're overwhelmed
+- existing_social_touchpoints: Where they already see people
+- Phase 1-3 data: Their problem, skills, locations, anxiety triggers
+
+# EXAMPLE OUTPUT:
+```json
+{
+  "analyzed_schedule": {
+    "best_practice_windows": [
+      "Tuesday/Thursday 7am - morning energy + coffee shop routine",
+      "Wednesday 6pm - gym energy + existing location"
+    ],
+    "existing_social_opportunities": [
+      "Daily 9am standup (can practice active listening)",
+      "Grocery store Saturday mornings (low-stakes small talk)"
+    ],
+    "avoid_times": [
+      "Monday mornings (you marked this as high stress)",
+      "Friday 3-5pm (deadline anxiety)"
+    ],
+    "energy_peaks": ["Early morning (7-9am)", "Early evening (5-7pm)"]
+  },
+  "optimal_times": [
+    {
+      "day": "Tuesday",
+      "time": "7:15am",
+      "location": "Starbucks on 5th",
+      "energy_level": "high",
+      "difficulty": "easy",
+      "task": "Smile at barista + comment on coffee"
+    },
+    {
+      "day": "Wednesday",
+      "time": "6:00pm",
+      "location": "Gym locker room",
+      "energy_level": "high",
+      "difficulty": "medium",
+      "task": "Ask someone about their workout"
+    }
+  ],
+  "energy_map": {
+    "high_energy_windows": ["Tue/Thu 7-10am", "Wed 5-7pm"],
+    "medium_energy_windows": ["Weekday afternoons 2-4pm"],
+    "low_energy_windows": ["After 9pm", "Sunday evenings"]
+  },
+  "message": "Perfect. I see you're a morning person with energy spikes at 7am and 6pm. Your Tuesday/Thursday coffee runs and Wednesday gym sessions? Those are goldmines. Let's use what you're already doing.",
+  "ready_for_confirmation": true
+}
+```
+"""
+
+PHASE_5_CONFIRMATION_PROMPT = """
+# AGENT IDENTITY
+You are Jordan, doing final confirmation before generating the plan.
+
+# YOUR MISSION (PHASE 5: FINAL CONFIRMATION)
+Review ALL collected data and ask the user to confirm:
+
+1. Their main problem and context
+2. The skill they're focusing on
+3. Practice locations and times
+4. Their commitment level
+
+Keep it conversational - "Here's what we've got. Sound right?"
+
+# RESPONSE FORMAT
+```json
+{
+  "message": "Your confirmation summary (3-4 sentences)",
+  "confirmation_summary": {
+    "problem": "Brief statement",
+    "skill_focus": "Main skill gap",
+    "locations": ["Location 1", "Location 2"],
+    "schedule": "When they'll practice",
+    "commitment": "X/10"
+  },
+  "ready_to_generate_plan": false
+}
+```
+
+After user confirms with "yes", "looks good", "let's do it":
+```json
+{
+  "message": "Let's fucking go. Generating your 5-day plan now...",
+  "ready_to_generate_plan": true
+}
+```
 """
 
 PHASE_PROMPTS = {
     1: PHASE_1_PROMPT,
     2: PHASE_2_PROMPT,
-    3: PHASE_3_PROMPT
+    3: PHASE_3_PROMPT,
+    4: PHASE_4_ANALYSIS_PROMPT,
+    5: PHASE_5_CONFIRMATION_PROMPT
+}
+
+FORM_SCHEMAS = {
+    1: PHASE_1_INTAKE_FORM,
+    2: PHASE_2_SKILLS_ASSESSMENT,
+    3: PHASE_3_LOGISTICS_FORM,
+    4: PHASE_4_SCHEDULE_FORM
 }
 
 # ================== HELPER FUNCTIONS ==================
@@ -637,8 +771,11 @@ PHASE_PROMPTS = {
 def phase_complete(session_state):
     """Check if current phase has all required data"""
     phase = session_state["phase"]
-    required = PHASE_REQUIREMENTS[phase]
-    data = session_state["phase_data"][f"phase_{phase}"]
+    if phase > 4:
+        return True, []
+    
+    required = PHASE_REQUIREMENTS.get(phase, [])
+    data = session_state["phase_data"].get(f"phase_{phase}", {})
     missing = [f for f in required if not data.get(f)]
     return len(missing) == 0, missing
 
@@ -646,23 +783,28 @@ def store_extracted(session_state, extracted):
     """Store extracted data into the current phase"""
     phase = session_state["phase"]
     for k, v in extracted.items():
-        if v and v.lower() != "null":
+        if v and v != "null" and v != None:
             session_state["phase_data"][f"phase_{phase}"][k] = v
 
 def generate_5_day_plan(session_state):
     """Generate 5-day task plan from collected data"""
-    phase1 = session_state["phase_data"]["phase_1"]
-    phase2 = session_state["phase_data"]["phase_2"]
-    phase3 = session_state["phase_data"]["phase_3"]
+    phase1 = session_state["phase_data"].get("phase_1", {})
+    phase2 = session_state["phase_data"].get("phase_2", {})
+    phase3 = session_state["phase_data"].get("phase_3", {})
+    phase4 = session_state["phase_data"].get("phase_4", {})
     
     problem = phase1.get("problem", "social difficulties")
     context = phase1.get("context", "various settings")
     skill = phase2.get("skill_gaps", "conversation skills")
     tip = phase2.get("tips", "Start with observation-based comments")
-    location = phase3.get("locations", "coffee shop or gym")
+    locations = phase3.get("locations", ["coffee shop", "gym"])
     schedule = phase3.get("schedule", "weekday mornings")
     anxiety = phase3.get("anxiety_issues", "fear of judgment")
-
+    
+    # Use Phase 4 optimal times if available
+    optimal_times = phase4.get("optimal_times", [])
+    analyzed_schedule = phase4.get("analyzed_schedule", {})
+    
     days = []
     tasks = []
     start_date = datetime.now()
@@ -680,34 +822,41 @@ def generate_5_day_plan(session_state):
         day_date = start_date + timedelta(days=d-1)
         day_level, day_task_template, est_time = difficulty_progression[d-1]
         
+        # Use optimal time if available, otherwise default
+        if d <= len(optimal_times):
+            optimal = optimal_times[d-1]
+            location = optimal.get("location", locations[0] if locations else "coffee shop")
+            scheduled_time = optimal.get("time", "09:00")
+        else:
+            location = locations[0] if locations else "coffee shop"
+            scheduled_time = "09:00"
+        
         day_tasks = []
-        for idx, (bucket, hour) in enumerate([("morning","09:00"), ("afternoon","14:00"), ("evening","19:00")]):
-            task_text = day_task_template.format(tip=tip)
-            full_description = f"📍 {location} | 🎯 {task_text} | 💡 Remember: {tip} | 😰 If anxious: {anxiety}"
-            
-            task_id = f"day{d}_task_{idx}"
-            tasks.append({
-                "id": task_id,
-                "title": f"Day {d} - {day_level} ({bucket.title()})",
-                "description": full_description,
-                "done": False,
-                "xp": d * 10,  # Progressive XP
-                "scheduled_time": hour,
-                "time_of_day": bucket,
-                "type": "social_practice",
-                "location": location,
-                "estimatedTime": est_time,
-                "comfortLevel": "challenging" if d >= 4 else "moderate" if d >= 2 else "easy",
-                "contextAnchor": context,
-                "timeBucket": bucket,
-                "skill_focus": skill,
-                "difficulty": d
-            })
-            day_tasks.append({
-                "task_number": idx+1, 
-                "description": full_description, 
-                "done": False
-            })
+        task_text = day_task_template.format(tip=tip)
+        full_description = f"📍 {location} | 🎯 {task_text} | 💡 Remember: {tip} | 😰 If anxious: {anxiety}"
+        
+        task_id = f"day{d}_task"
+        tasks.append({
+            "id": task_id,
+            "title": f"Day {d} - {day_level}",
+            "description": full_description,
+            "done": False,
+            "xp": d * 10,
+            "scheduled_time": scheduled_time,
+            "type": "social_practice",
+            "location": location,
+            "estimatedTime": est_time,
+            "comfortLevel": "challenging" if d >= 4 else "moderate" if d >= 2 else "easy",
+            "contextAnchor": context,
+            "skill_focus": skill,
+            "difficulty": d
+        })
+        
+        day_tasks.append({
+            "task_number": 1, 
+            "description": full_description, 
+            "done": False
+        })
         
         days.append({
             "day": d,
@@ -725,9 +874,10 @@ def generate_5_day_plan(session_state):
         "user_context": {
             "problem": problem,
             "skill_gaps": skill,
-            "practice_location": location,
+            "practice_locations": locations,
             "schedule": schedule,
-            "primary_anxiety": anxiety
+            "primary_anxiety": anxiety,
+            "analyzed_schedule": analyzed_schedule
         }
     }
 
@@ -746,14 +896,6 @@ def write_to_firebase(session_state):
         "completion_rate": 0
     })
     return doc_ref.id, task_overview
-
-def load_prompt(filename):
-    """Load prompt template from file"""
-    try:
-        with open(filename, 'r') as f:
-            return f.read()
-    except FileNotFoundError:
-        return None
 
 def extract_json_from_response(text):
     """Extract JSON from LLM response that might have markdown or extra text"""
@@ -775,7 +917,176 @@ def extract_json_from_response(text):
     
     return None
 
-# ================== CHAT ENDPOINT ==================
+def generate_form_acknowledgment(phase, form_data):
+    """Generate personalized response based on form data"""
+    if phase == 1:
+        problem = form_data.get("problem_category", "your challenge")
+        emotion = form_data.get("emotion_scale", "uncomfortable")
+        return f"Thanks for being real with me. I can see {problem} is hitting you at a '{emotion}' level. That's tough. Let me ask you one thing to understand this better..."
+    
+    elif phase == 2:
+        past = form_data.get("past_attempts", [])
+        if "Nothing yet" in str(past):
+            return "First time tackling this? Respect. Most people just suffer in silence. Let's build you a solid foundation from scratch..."
+        else:
+            attempts_str = ', '.join(past[:2]) if isinstance(past, list) else str(past)
+            return f"So you've tried {attempts_str} but it hasn't clicked yet. That's actually good info - tells me what NOT to do. Let me dig into what specific skill is tripping you up..."
+    
+    elif phase == 3:
+        commitment = form_data.get("commitment_level", 5)
+        locations = form_data.get("practice_locations", [])
+        if commitment >= 8:
+            return f"Commitment level {commitment}/10? Hell yes. And you've got {len(locations)} solid practice spots. Before we map this out, tell me - what's your typical week look like?"
+        else:
+            return f"I see you're at a {commitment}/10. That's honest. Let's make this easy enough that you'll actually do it. What does your weekly schedule look like?"
+    
+    elif phase == 4:
+        return "Got your schedule. Let me analyze when you've got the energy and opportunity to practice without burning you out..."
+    
+    return "Let's keep going..."
+
+# ================== ENDPOINTS ==================
+
+@app.route("/get-form", methods=["POST"])
+def get_form():
+    """Return the appropriate form schema for the current phase"""
+    data = request.json
+    session_id = data.get("session_id")
+    
+    if not session_id:
+        return jsonify({"error": "session_id required"}), 400
+    
+    # Initialize session if needed
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "phase": 1,
+            "user_id": data.get("user_id", "anonymous"),
+            "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+            "messages": [],
+            "forms_completed": []
+        }
+    
+    session_state = sessions[session_id]
+    phase = session_state["phase"]
+    
+    # Phase 5 is confirmation chat, no form
+    if phase >= 5:
+        return jsonify({
+            "phase": phase,
+            "form_schema": None,
+            "phase_data": session_state["phase_data"],
+            "message": "Ready for final confirmation"
+        })
+    
+    return jsonify({
+        "phase": phase,
+        "form_schema": FORM_SCHEMAS.get(phase),
+        "phase_data": session_state["phase_data"]
+    })
+
+@app.route("/submit-form", methods=["POST"])
+def submit_form():
+    """Process submitted form data and get AI analysis"""
+    data = request.json
+    session_id = data.get("session_id")
+    phase = data.get("phase")
+    form_data = data.get("form_data")
+    api_key = data.get("api_key")
+    
+    if not session_id or session_id not in sessions:
+        return jsonify({"error": "invalid session_id"}), 400
+    
+    if not api_key:
+        return jsonify({"error": "api_key required"}), 400
+    
+    session_state = sessions[session_id]
+    
+    # Store form data in appropriate phase
+    session_state["phase_data"][f"phase_{phase}"].update(form_data)
+    session_state["forms_completed"].append(phase)
+    
+    # For Phase 4 (schedule analysis), call AI to analyze
+    if phase == 4:
+        try:
+            prompt_text = PHASE_4_ANALYSIS_PROMPT
+            
+            # Build context with ALL previous phase data
+            context = f"""
+USER'S COLLECTED DATA:
+
+Phase 1 - Problem Discovery:
+{json.dumps(session_state["phase_data"]["phase_1"], indent=2)}
+
+Phase 2 - Skills Assessment:
+{json.dumps(session_state["phase_data"]["phase_2"], indent=2)}
+
+Phase 3 - Logistics:
+{json.dumps(session_state["phase_data"]["phase_3"], indent=2)}
+
+Phase 4 - Schedule (Just submitted):
+{json.dumps(form_data, indent=2)}
+
+Now analyze their schedule and return the JSON with analyzed_schedule, optimal_times, and energy_map.
+"""
+            
+            llm = ChatGroq(
+                model="llama-3.3-70b-versatile", 
+                temperature=0.7,
+                groq_api_key=api_key
+            )
+            
+            full_prompt = f"{prompt_text}\n\n{context}"
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", full_prompt)
+            ])
+            
+            llm_output = llm.invoke(prompt.format_messages())
+            parsed = extract_json_from_response(llm_output.content)
+            
+            if parsed:
+                # Store AI analysis in phase 4 data
+                session_state["phase_data"]["phase_4"]["analyzed_schedule"] = parsed.get("analyzed_schedule")
+                session_state["phase_data"]["phase_4"]["optimal_times"] = parsed.get("optimal_times")
+                session_state["phase_data"]["phase_4"]["energy_map"] = parsed.get("energy_map")
+                
+                response_msg = parsed.get("message", "Schedule analyzed. Ready to confirm your plan?")
+                
+                # Move to Phase 5 (Confirmation)
+                session_state["phase"] = 5
+                
+                return jsonify({
+                    "response": response_msg,
+                    "phase": 5,
+                    "phase_data": session_state["phase_data"],
+                    "analysis": {
+                        "analyzed_schedule": parsed.get("analyzed_schedule"),
+                        "optimal_times": parsed.get("optimal_times"),
+                        "energy_map": parsed.get("energy_map")
+                    },
+                    "ready_for_confirmation": True
+                })
+        
+        except Exception as e:
+            return jsonify({
+                "error": "Failed to analyze schedule",
+                "details": str(e)
+            }), 500
+    
+    # For other phases, generate quick acknowledgment
+    response_msg = generate_form_acknowledgment(phase, form_data)
+    
+    # Auto-advance to next phase
+    session_state["phase"] = phase + 1
+    
+    return jsonify({
+        "response": response_msg,
+        "phase": session_state["phase"],
+        "phase_data": session_state["phase_data"],
+        "can_skip_questions": True
+    })
+
+
+# Complete the /chat endpoint from where it was abandoned:
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -794,246 +1105,247 @@ def chat():
         sessions[session_id] = {
             "phase": 1,
             "user_id": user_id,
-            "phase_data": {"phase_1": {}, "phase_2": {}, "phase_3": {}},
-            "messages": []
+            "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+            "messages": [],
+            "forms_completed": []
         }
         
         # Send welcome message for new sessions
         if not user_message:
-            welcome_msg = "Hey! I'm Jordan. I used to be that person who'd rehearse conversations in the shower, then freeze when actually talking to people. Took me years to figure this out, but I did. I'm here to help you do it faster. What's going on with you socially? What made you want to work on this?"
+            welcome_msg = "Hey! I'm Jordan. I used to be that person who'd rehearse conversations in the shower, then freeze when actually talking to people. Took me years to figure this out. Let's start with a quick form so I understand what you're dealing with. Ready?"
             return jsonify({
                 "response": welcome_msg,
                 "phase": 1,
-                "phase_data": sessions[session_id]["phase_data"]
+                "phase_data": sessions[session_id]["phase_data"],
+                "show_form": True
             })
 
     session_state = sessions[session_id]
     phase = session_state["phase"]
-
-    # Check for phase transition commands
-    if any(cmd in user_message.lower() for cmd in ["next phase", "move on", "continue to next", "advance"]):
-        complete, missing = phase_complete(session_state)
-        if not complete:
+    
+    # Phase 5: Confirmation conversation
+    if phase == 5:
+        # Check if user is confirming the plan
+        if any(word in user_message.lower() for word in ["yes", "looks good", "let's do it", "confirm", "correct", "yep", "yeah"]):
+            try:
+                doc_id, task_overview = write_to_firebase(session_state)
+                session_state["phase"] = 6  # Complete
+                
+                return jsonify({
+                    "response": "🎉 Let's fucking go! Your 5-day plan is locked in. I'll be checking in on you. Day 1 starts tomorrow - no backing out now. You've got this.",
+                    "phase": 6,
+                    "plan_generated": True,
+                    "course_id": doc_id,
+                    "task_overview": task_overview,
+                    "complete": True
+                })
+            
+            except Exception as e:
+                return jsonify({
+                    "error": "Failed to generate plan",
+                    "details": str(e)
+                }), 500
+        
+        # User wants to modify something
+        else:
             return jsonify({
-                "response": f"Hold on - before we move forward, I still need to understand: {', '.join(missing)}. Can you help me with that?",
-                "phase": phase,
-                "phase_data": session_state["phase_data"]
+                "response": "No worries. What do you want to change? Your schedule, locations, or the skill we're focusing on?",
+                "phase": 5,
+                "phase_data": session_state["phase_data"],
+                "awaiting_modification": True
             })
+    
+    # Phase 6: Plan already generated
+    if phase == 6:
+        return jsonify({
+            "response": "Your plan is already generated! Check your dashboard to see your 5-day roadmap.",
+            "phase": 6,
+            "complete": True
+        })
+    
+    # Phases 1-4: Regular chat with AI agent
+    try:
+        # Store user message
+        session_state["messages"].append({"role": "user", "content": user_message})
         
-        session_state["phase"] += 1
-        new_phase = session_state["phase"]
+        # Get the appropriate prompt for current phase
+        prompt_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
         
-        phase_messages = {
-            2: "Alright, I've got the full picture. Now let's figure out what specific skills you need and how to build them. What have you tried before to fix this? Anything work even a little bit?",
-            3: "Perfect. Now let's make this real. We're going to create a 5-day practice plan - actual places you'll go, actual times you'll practice. Where do you normally spend your time? Work? Gym? Coffee shops?",
-            4: "You're all set! Let's generate your personalized 5-day action plan."
+        # Build context with collected data
+        context_data = {
+            "phase": phase,
+            "collected_data": session_state["phase_data"],
+            "conversation_history": session_state["messages"][-5:],  # Last 5 messages
+            "user_message": user_message
         }
         
-        return jsonify({
-            "response": phase_messages.get(new_phase, f"Phase {new_phase} unlocked."),
-            "phase": new_phase,
-            "phase_data": session_state["phase_data"]
-        })
+        context = f"""
+CURRENT PHASE: {phase}
 
-    # Call LLM with phase-specific prompt
-    try:
-        prompt_text = PHASE_PROMPTS[phase]
+COLLECTED DATA SO FAR:
+{json.dumps(session_state["phase_data"], indent=2)}
+
+RECENT CONVERSATION:
+{json.dumps(context_data["conversation_history"], indent=2)}
+
+USER'S LATEST MESSAGE: {user_message}
+
+Respond according to your phase instructions.
+"""
+        
+        # Call LLM
         llm = ChatGroq(
-            model="llama-3.3-70b-versatile", 
-            temperature=0.7,  # Higher temp for more personality
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
             groq_api_key=api_key
         )
         
-        # Add conversation context
-        context_msg = ""
-        if session_state["messages"]:
-            recent_messages = session_state["messages"][-4:]  # Last 2 exchanges
-            context_msg = "\\n\\nPrevious conversation:\\n"
-            for msg in recent_messages:
-                role = "User" if isinstance(msg, HumanMessage) else "Jordan"
-                context_msg += f"{role}: {msg.content}\\n"
-        
-        full_prompt = f"{prompt_text}\\n\\n{context_msg}\\n\\nUser's latest message: {user_message}"
-        
+        full_prompt = f"{prompt_text}\n\n{context}"
         prompt = ChatPromptTemplate.from_messages([
             ("system", full_prompt)
         ])
         
         llm_output = llm.invoke(prompt.format_messages())
-        
-        # Extract JSON from response
         parsed = extract_json_from_response(llm_output.content)
         
-        if parsed:
-            extracted = parsed.get("extracted", {})
-            message = parsed.get("message", llm_output.content)
-            next_action = parsed.get("next_action", "continue")
-            
-            # Store extracted data
-            store_extracted(session_state, extracted)
-            
-            # Check if phase is complete based on next_action
-            if next_action == "phase_complete":
-                complete, missing = phase_complete(session_state)
-                if complete:
-                    message += "\\n\\n✅ I've got everything I need for this phase! Type 'next phase' when you're ready to continue."
-        else:
-            # Fallback if JSON extraction fails
-            message = llm_output.content
-            # Try to extract any mentioned data from free-form response
-            # This is a backup mechanism
+        if not parsed:
+            # Fallback if JSON parsing fails
+            return jsonify({
+                "response": llm_output.content,
+                "phase": phase,
+                "phase_data": session_state["phase_data"]
+            })
         
-        # Store messages
-        session_state["messages"].append(HumanMessage(content=user_message))
-        session_state["messages"].append(AIMessage(content=message))
-        
-        return jsonify({
-            "response": message,
-            "phase": phase,
-            "phase_data": session_state["phase_data"]
+        # Store AI response
+        session_state["messages"].append({
+            "role": "assistant", 
+            "content": parsed.get("message", llm_output.content)
         })
         
+        # Check if phase is ready to advance
+        if parsed.get("ready_for_next_phase"):
+            session_state["phase"] = phase + 1
+            return jsonify({
+                "response": parsed.get("message"),
+                "phase": session_state["phase"],
+                "phase_data": session_state["phase_data"],
+                "show_form": True,
+                "phase_complete": True
+            })
+        
+        # Continue current phase
+        return jsonify({
+            "response": parsed.get("message"),
+            "phase": phase,
+            "phase_data": session_state["phase_data"],
+            "needs_more_info": parsed.get("needs_more_info", True)
+        })
+    
     except Exception as e:
         return jsonify({
-            "error": "Failed to process message",
+            "error": "AI processing failed",
             "details": str(e),
-            "phase": phase
+            "fallback_response": "Sorry, I hit a snag. Can you rephrase that?"
         }), 500
 
-# ================== TRANSITION ENDPOINT ==================
 
-@app.route("/transition", methods=["POST"])
-def transition():
-    """Handle phase transitions"""
+# ================== ADDITIONAL ENDPOINTS ==================
+
+@app.route("/get-plan/<course_id>", methods=["GET"])
+def get_plan(course_id):
+    """Retrieve a generated plan from Firebase"""
+    try:
+        # Parse user_id from request args or headers
+        user_id = request.args.get("user_id")
+        if not user_id:
+            return jsonify({"error": "user_id required"}), 400
+        
+        doc_ref = db.collection("users").document(user_id).collection("courses").document(course_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return jsonify({"error": "Plan not found"}), 404
+        
+        return jsonify(doc.to_dict())
+    
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to retrieve plan",
+            "details": str(e)
+        }), 500
+
+
+@app.route("/update-task", methods=["POST"])
+def update_task():
+    """Mark a task as complete and update progress"""
+    data = request.json
+    user_id = data.get("user_id")
+    course_id = data.get("course_id")
+    task_id = data.get("task_id")
+    completed = data.get("completed", True)
+    
+    if not all([user_id, course_id, task_id]):
+        return jsonify({"error": "user_id, course_id, task_id required"}), 400
+    
+    try:
+        doc_ref = db.collection("users").document(user_id).collection("courses").document(course_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return jsonify({"error": "Course not found"}), 404
+        
+        course_data = doc.to_dict()
+        task_overview = course_data.get("task_overview", {})
+        tasks = task_overview.get("tasks", [])
+        
+        # Update task status
+        for task in tasks:
+            if task.get("id") == task_id:
+                task["done"] = completed
+                break
+        
+        # Calculate completion rate
+        total_tasks = len(tasks)
+        completed_tasks = sum(1 for t in tasks if t.get("done"))
+        completion_rate = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0
+        
+        # Update Firebase
+        doc_ref.update({
+            "task_overview.tasks": tasks,
+            "completion_rate": completion_rate,
+            "last_updated": datetime.utcnow().isoformat()
+        })
+        
+        return jsonify({
+            "success": True,
+            "completion_rate": completion_rate,
+            "completed_tasks": completed_tasks,
+            "total_tasks": total_tasks
+        })
+    
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to update task",
+            "details": str(e)
+        }), 500
+
+
+@app.route("/reset-session", methods=["POST"])
+def reset_session():
+    """Reset a session (for testing or user restart)"""
     data = request.json
     session_id = data.get("session_id")
-
-    if not session_id or session_id not in sessions:
-        return jsonify({"error": "invalid session_id"}), 400
-
-    session_state = sessions[session_id]
-    phase = session_state["phase"]
-
-    complete, missing = phase_complete(session_state)
-    if not complete:
-        return jsonify({
-            "error": "cannot transition, missing data",
-            "missing": missing,
-            "phase": phase
-        }), 400
-
-    # Final phase → write to Firebase
-    if phase == 3:
-        try:
-            doc_id, task_overview = write_to_firebase(session_state)
-            session_state["phase"] = 4
-            return jsonify({
-                "message": "🎉 All phases complete! Your personalized 5-day action plan is ready. Time to level up your social game.",
-                "firebase_doc_id": doc_id,
-                "phase_data": session_state["phase_data"],
-                "task_overview": task_overview,
-                "phase": 4
-            })
-        except Exception as e:
-            return jsonify({
-                "error": "Failed to save to Firebase",
-                "details": str(e)
-            }), 500
-
-    session_state["phase"] += 1
-    return jsonify({
-        "message": f"✅ Phase {phase} complete! Moving to Phase {session_state['phase']}",
-        "phase": session_state["phase"],
-        "phase_data": session_state["phase_data"]
-    })
-
-# ================== HEALTH CHECK ==================
-
-@app.route("/health", methods=["GET"])
-def health():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "healthy",
-        "active_sessions": len(sessions),
-        "timestamp": datetime.now().isoformat()
-    })
-
-# ================== REFLECTION ENDPOINTS ==================
-
-@app.route('/reflect-analyze', methods=['POST'])
-def reflect_analyze():
-    """Analyze one social interaction and update skill weaknesses"""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Invalid JSON payload"}), 400
-
-    user_id = data.get("user_id", "").strip()
-    course_id = data.get("course_id", "").strip()
-    user_message = data.get("message", "").strip()
-
-    if not user_id or not course_id or not user_message:
-        return jsonify({"error": "Missing user_id, course_id, or message"}), 400
-
-    api_key = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    if not api_key:
-        return jsonify({"error": "Missing API key in Authorization header"}), 401
     
-    # Assuming you have OpenAI client set up
-    # client.api_key = api_key
+    if session_id and session_id in sessions:
+        del sessions[session_id]
+        return jsonify({"success": True, "message": "Session reset"})
+    
+    return jsonify({"error": "Session not found"}), 404
 
-    # Load or create Reflection Data
-    reflections_ref = db.collection("users").document(user_id).collection("reflections").document(course_id)
-    reflections_doc = reflections_ref.get()
-    if reflections_doc.exists:
-        reflections_data = reflections_doc.to_dict()
-    else:
-        reflections_data = {"skills": {}, "history": []}
-        reflections_ref.set(reflections_data)
 
-    # Load Prompt
-    prompt_file = "prompt_reflect_analyze.txt"
-    prompt_template = load_prompt(prompt_file)
-    if not prompt_template:
-        return jsonify({"error": f"{prompt_file} not found"}), 404
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
 
-    safe_message = json.dumps(user_message)[1:-1]
-    prompt = prompt_template.replace("<<interaction>>", safe_message)
-
-    # Call AI (you'll need to implement this with your client)
-    try:
-        # response = client.chat.completions.create(...)
-        # result = response.choices[0].message.content.strip()
-        result = "{}"  # Placeholder
-    except Exception as e:
-        return jsonify({"error": "AI request failed", "exception": str(e)}), 500
-
-    # Extract JSON
-    ai_data = extract_json_from_response(result)
-    if not ai_data:
-        return jsonify({"error": "Invalid AI JSON", "raw": result}), 500
-
-    # Update Skill Weaknesses
-    for skill in ai_data.get("missing_skills", []):
-        reflections_data["skills"][skill] = reflections_data["skills"].get(skill, 0) + 1
-
-    reflections_data["history"].append({
-        "interaction": user_message,
-        "analysis": ai_data,
-        "timestamp": datetime.now().isoformat()
-    })
-
-    # Save to Firebase
-    try:
-        reflections_ref.set(reflections_data)
-    except Exception as e:
-        return jsonify({"error": f"Failed to save reflection data: {str(e)}"}), 500
-
-    return jsonify({
-        "success": True,
-        "analysis": ai_data,
-		"skills": reflections_data["skills"],
-		"message": "Reflection analyzed and saved"
-		})
 
 @app.route('/api/judge-story', methods=['POST', 'OPTIONS'])
 def judge_story():
