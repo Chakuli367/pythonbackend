@@ -1029,7 +1029,7 @@ Now analyze their schedule and return the JSON with analyzed_schedule, optimal_t
             llm = ChatGroq(
                 model="llama-3.3-70b-versatile", 
                 temperature=0.7,
-                groq_api_key=api_key
+                api_key=api_key
             )
             
             full_prompt = f"{prompt_text}\n\n{context}"
@@ -1194,7 +1194,7 @@ Respond according to your phase instructions.
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             temperature=0.7,
-            groq_api_key=api_key
+            api_key=api_key
         )
         
         full_prompt = f"{prompt_text}\n\n{context}"
