@@ -331,15 +331,8 @@ def parse_story_analysis(analysis_text):
 
 
 
-# Initialize Firebase (assuming you have this set up)
-# from firebase_admin import credentials, firestore, initialize_app
-# cred = credentials.Certificate("path/to/serviceAccountKey.json")
-# initialize_app(cred)
-# db = firestore.client()
 
-# For other endpoints that use 'client'
-# from openai import OpenAI
-# client = OpenAI()
+
 # ================== PHASE CONFIG ==================
 PHASE_REQUIREMENTS = {
     1: ["problem", "context", "emotion", "impact"],
@@ -446,10 +439,10 @@ You are Jordan, now analyzing their schedule like a coach planning training sess
 User submitted their weekly schedule. You need to:
 
 1. **ANALYZE THEIR SCHEDULE** for optimal practice windows:
-   - Identify low-stress times when they have energy
-   - Find existing social touchpoints they can leverage
-   - Avoid their stress peaks
-   - Match practice difficulty to energy levels
+    - Identify low-stress times when they have energy
+    - Find existing social touchpoints they can leverage
+    - Avoid their stress peaks
+    - Match practice difficulty to energy levels
 
 2. **EXTRACT STRUCTURED DATA** - Return this JSON:
 ```json
@@ -483,10 +476,10 @@ User submitted their weekly schedule. You need to:
 ```
 
 3. **BE STRATEGIC**:
-   - Start with high-energy + existing social touchpoints
-   - Progressive difficulty: morning coffee small talk → gym longer convos → work networking
-   - Avoid stacking practices on their worst days
-   - Leverage their routine (don't add extra trips)
+    - Start with high-energy + existing social touchpoints
+    - Progressive difficulty: morning coffee small talk → gym longer convos → work networking
+    - Avoid stacking practices on their worst days
+    - Leverage their routine (don't add extra trips)
 """
 
 PHASE_5_CONFIRMATION_PROMPT = """
@@ -651,14 +644,18 @@ def generate_5_day_plan(session_state):
 def write_to_firebase(session_state):
     """Save completed session data to Firebase"""
     if not db:
+        # Mock behavior if db is not initialized
         return "mock_doc_id", generate_5_day_plan(session_state)
     
     user_id = session_state["user_id"]
     created_at = datetime.utcnow().isoformat()
     task_overview = generate_5_day_plan(session_state)
 
-    doc_ref = db.collection("users").document(user_id).collection("courses").document()
+    # Note: Using the non-private path for this example, assuming data sharing/public dashboard might be desired
+    doc_ref = db.collection(f"artifacts/{app.config.get('APP_ID', 'default-app-id')}/public/data/courses").document()
+    
     doc_ref.set({
+        "user_id": user_id,
         "created_at": created_at,
         "phase_data": session_state["phase_data"],
         "task_overview": task_overview,
@@ -741,20 +738,23 @@ def submit_phase_data():
         # Get the appropriate prompt for current phase
         prompt_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
         
+        # --- FIX: Escape curly braces in JSON output to prevent KeyErrors in f-string ---
+        form_data_str = json.dumps(form_data, indent=2).replace('{', '{{').replace('}', '}}')
+        prev_data_str = json.dumps(session_state["phase_data"], indent=2).replace('{', '{{').replace('}', '}}')
+        # --- END FIX ---
+        
         # Build context with form data and previous phases
         context = f"""
 USER'S FORM SUBMISSION FOR PHASE {phase}:
-{json.dumps(form_data, indent=2)}
+{form_data_str}
 
 PREVIOUSLY COLLECTED DATA:
-{json.dumps(session_state["phase_data"], indent=2)}
+{prev_data_str}
 
 Analyze the form data, extract the required information according to your phase instructions, and respond in the specified JSON format.
 """
         
         # Call LLM
-        # NOTE: If the model name "llama-3.3-70b-versatile" is the actual problem,
-        # it will show up clearly in the traceback now!
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             temperature=0.7,
@@ -904,15 +904,20 @@ def chat():
             "conversation_history": session_state["messages"][-5:],  # Last 5 messages
             "user_message": user_message
         }
-        
+
+        # --- FIX: Escape curly braces in JSON output to prevent KeyErrors in f-string ---
+        collected_data_str = json.dumps(session_state["phase_data"], indent=2).replace('{', '{{').replace('}', '}}')
+        conversation_history_str = json.dumps(context_data["conversation_history"], indent=2).replace('{', '{{').replace('}', '}}')
+        # --- END FIX ---
+
         context = f"""
 CURRENT PHASE: {phase}
 
 COLLECTED DATA SO FAR:
-{json.dumps(session_state["phase_data"], indent=2)}
+{collected_data_str}
 
 RECENT CONVERSATION:
-{json.dumps(context_data["conversation_history"], indent=2)}
+{conversation_history_str}
 
 USER'S LATEST MESSAGE: {user_message}
 
@@ -1094,6 +1099,8 @@ def reset_session():
     return jsonify({"error": "Session not found"}), 404
 
 if __name__ == "__main__":
+    # Ensure APP_ID is set if not already done via environment config
+    app.config['APP_ID'] = os.environ.get('APP_ID', 'default-app-id')
     app.run(debug=True, port=5000)
     
 
