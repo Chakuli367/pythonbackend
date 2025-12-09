@@ -723,6 +723,7 @@ def submit_phase_data():
     form_data = data.get("form_data")
     api_key = data.get("api_key")
     
+    # 1. Input Validation
     if not session_id or session_id not in sessions:
         return jsonify({"error": "invalid session_id"}), 400
     
@@ -735,38 +736,50 @@ def submit_phase_data():
     session_state = sessions[session_id]
     
     try:
-        # Get the appropriate prompt for current phase
-        prompt_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
+        # 2. Get the appropriate prompt and prepare data
+        prompt_template_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
         
-        # --- FIX: Escape curly braces in JSON output to prevent KeyErrors in f-string ---
-        form_data_str = json.dumps(form_data, indent=2).replace('{', '{{').replace('}', '}}')
-        prev_data_str = json.dumps(session_state["phase_data"], indent=2).replace('{', '{{').replace('}', '}}')
-        # --- END FIX ---
+        # Prepare the dynamic data as JSON strings (no need for manual double-brace escaping)
+        form_data_str = json.dumps(form_data, indent=2)
+        prev_data_str = json.dumps(session_state["phase_data"], indent=2)
         
-        # Build context with form data and previous phases
-        context = f"""
-USER'S FORM SUBMISSION FOR PHASE {phase}:
-{form_data_str}
+        # 3. Define the LLM Context Template
+        # We use template placeholders {{variable_name}} for dynamic data
+        # to cleanly separate them from the LLM's required JSON output.
+        context_template = f"""
+{{prompt_text}}
+
+USER'S FORM SUBMISSION FOR PHASE {{phase_num}}:
+{{form_data_str}}
 
 PREVIOUSLY COLLECTED DATA:
-{prev_data_str}
+{{prev_data_str}}
 
 Analyze the form data, extract the required information according to your phase instructions, and respond in the specified JSON format.
 """
         
-        # Call LLM
+        # 4. Create the ChatPromptTemplate
+        # The template itself is a single System Message
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", context_template)
+        ])
+        
+        # 5. Invoke LLM with ALL required variables filled in
+        # We pass the template text itself as a variable
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             temperature=0.7,
             groq_api_key=api_key
         )
         
-        full_prompt = f"{prompt_text}\n\n{context}"
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", full_prompt)
-        ])
+        llm_output = llm.invoke(prompt.format_messages(
+            prompt_text=prompt_template_text, # Inject the phase-specific instructions here
+            phase_num=phase,
+            form_data_str=form_data_str,
+            prev_data_str=prev_data_str
+        ))
         
-        llm_output = llm.invoke(prompt.format_messages())
+        # 6. Parse and Process Response
         parsed = extract_json_from_response(llm_output.content)
         
         if not parsed:
@@ -795,6 +808,7 @@ Analyze the form data, extract the required information according to your phase 
         else:
             next_phase = phase
         
+        # 7. Success Response
         return jsonify({
             "success": True,
             "response": response_msg,
@@ -805,7 +819,7 @@ Analyze the form data, extract the required information according to your phase 
         })
     
     except Exception as e:
-        # 🚨 UPDATED ERROR HANDLING BLOCK 🚨
+        # 8. Error Handling
         full_traceback = traceback.format_exc()
         print("--- /submit-phase-data FULL TRACEBACK ---")
         print(full_traceback)
@@ -814,8 +828,9 @@ Analyze the form data, extract the required information according to your phase 
         return jsonify({
             "error": "Backend processing failed: An unexpected error occurred.",
             "details": str(e),
-            "traceback": full_traceback # <-- THIS IS THE KEY DETAIL TO FIND THE BUG
+            "traceback": full_traceback
         }), 500
+        
 
 @app.route("/chat", methods=["POST"])
 def chat():
