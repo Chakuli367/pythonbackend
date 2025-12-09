@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TypedDict, Annotated, Literal
 from flask_cors import cross_origin
 from openai import OpenAI
-
+import traceback 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
@@ -753,6 +753,8 @@ Analyze the form data, extract the required information according to your phase 
 """
         
         # Call LLM
+        # NOTE: If the model name "llama-3.3-70b-versatile" is the actual problem,
+        # it will show up clearly in the traceback now!
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             temperature=0.7,
@@ -803,9 +805,16 @@ Analyze the form data, extract the required information according to your phase 
         })
     
     except Exception as e:
+        # 🚨 UPDATED ERROR HANDLING BLOCK 🚨
+        full_traceback = traceback.format_exc()
+        print("--- /submit-phase-data FULL TRACEBACK ---")
+        print(full_traceback)
+        print("------------------------------------------")
+        
         return jsonify({
-            "error": "Failed to process phase data",
-            "details": str(e)
+            "error": "Backend processing failed: An unexpected error occurred.",
+            "details": str(e),
+            "traceback": full_traceback # <-- THIS IS THE KEY DETAIL TO FIND THE BUG
         }), 500
 
 @app.route("/chat", methods=["POST"])
@@ -851,9 +860,16 @@ def chat():
                 })
             
             except Exception as e:
+                # 🚨 UPDATED ERROR HANDLING BLOCK 🚨
+                full_traceback = traceback.format_exc()
+                print("--- /chat (Phase 5) FULL TRACEBACK ---")
+                print(full_traceback)
+                print("------------------------------------------")
+                
                 return jsonify({
                     "error": "Failed to generate plan",
-                    "details": str(e)
+                    "details": str(e),
+                    "traceback": full_traceback
                 }), 500
         
         # User wants to modify something
@@ -951,12 +967,19 @@ Respond according to your phase instructions.
         })
     
     except Exception as e:
+        # 🚨 UPDATED ERROR HANDLING BLOCK 🚨
+        full_traceback = traceback.format_exc()
+        print("--- /chat FULL TRACEBACK ---")
+        print(full_traceback)
+        print("------------------------------------------")
+        
         return jsonify({
             "error": "AI processing failed",
             "details": str(e),
+            "traceback": full_traceback, # <-- THIS IS THE KEY DETAIL TO FIND THE BUG
             "fallback_response": "Sorry, I hit a snag. Can you rephrase that?"
         }), 500
-
+        
 @app.route("/get-session-status", methods=["POST"])
 def get_session_status():
     """Get current session status"""
