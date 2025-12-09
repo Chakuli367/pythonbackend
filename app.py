@@ -832,6 +832,7 @@ Analyze the form data, extract the required information according to your phase 
         }), 500
         
 
+
 @app.route("/chat", methods=["POST"])
 def chat():
     """Main conversational endpoint with Jordan AI"""
@@ -875,7 +876,6 @@ def chat():
                 })
             
             except Exception as e:
-                # 🚨 UPDATED ERROR HANDLING BLOCK 🚨
                 full_traceback = traceback.format_exc()
                 print("--- /chat (Phase 5) FULL TRACEBACK ---")
                 print(full_traceback)
@@ -916,16 +916,12 @@ def chat():
         context_data = {
             "phase": phase,
             "collected_data": session_state["phase_data"],
-            "conversation_history": session_state["messages"][-5:],  # Last 5 messages
+            "conversation_history": session_state["messages"][-5:],
             "user_message": user_message
         }
 
-        # --- FIX: Escape curly braces in JSON output to prevent KeyErrors in f-string ---
-        collected_data_str = json.dumps(session_state["phase_data"], indent=2).replace('{', '{{').replace('}', '}}')
-        conversation_history_str = json.dumps(context_data["conversation_history"], indent=2).replace('{', '{{').replace('}', '}}')
-        # --- END FIX ---
-
-        context = f"""
+        # Build context WITHOUT f-strings to avoid JSON escaping issues
+        context_template = """
 CURRENT PHASE: {phase}
 
 COLLECTED DATA SO FAR:
@@ -938,6 +934,14 @@ USER'S LATEST MESSAGE: {user_message}
 
 Respond according to your phase instructions.
 """
+        
+        # Format with proper JSON serialization
+        context = context_template.format(
+            phase=phase,
+            collected_data_str=json.dumps(session_state["phase_data"], indent=2),
+            conversation_history_str=json.dumps(context_data["conversation_history"], indent=2),
+            user_message=user_message
+        )
         
         # Call LLM
         llm = ChatGroq(
@@ -987,7 +991,6 @@ Respond according to your phase instructions.
         })
     
     except Exception as e:
-        # 🚨 UPDATED ERROR HANDLING BLOCK 🚨
         full_traceback = traceback.format_exc()
         print("--- /chat FULL TRACEBACK ---")
         print(full_traceback)
@@ -996,7 +999,7 @@ Respond according to your phase instructions.
         return jsonify({
             "error": "AI processing failed",
             "details": str(e),
-            "traceback": full_traceback, # <-- THIS IS THE KEY DETAIL TO FIND THE BUG
+            "traceback": full_traceback,
             "fallback_response": "Sorry, I hit a snag. Can you rephrase that?"
         }), 500
         
