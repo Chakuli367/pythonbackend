@@ -955,7 +955,7 @@ Respond according to your phase instructions.
             ("system", full_prompt)
         ])
         
-        llm_output = llm.invoke(prompt.format_messages())
+        llm_output = llm.invoke([{"role": "system", "content": full_prompt}])
         parsed = extract_json_from_response(llm_output.content)
         
         if not parsed:
