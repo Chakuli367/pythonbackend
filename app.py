@@ -688,7 +688,7 @@ def extract_json_from_response(text):
 
 @app.route("/init-session", methods=["POST"])
 def init_session():
-    """Initialize a new session"""
+    """Initialize a new session OR reconnect to existing"""
     data = request.json
     session_id = data.get("session_id")
     user_id = data.get("user_id", "anonymous")
@@ -696,7 +696,19 @@ def init_session():
     if not session_id:
         return jsonify({"error": "session_id required"}), 400
     
-    # Initialize session
+    # Check if session already exists
+    if session_id in sessions:
+        existing = sessions[session_id]
+        print(f"✅ Reconnecting to existing session {session_id} at phase {existing['phase']}")
+        return jsonify({
+            "success": True,
+            "message": "Reconnected to your session. Let's continue!",
+            "phase": existing["phase"],
+            "session_id": session_id,
+            "reconnected": True
+        })
+    
+    # Initialize NEW session
     sessions[session_id] = {
         "phase": 1,
         "user_id": user_id,
@@ -705,14 +717,18 @@ def init_session():
         "forms_completed": []
     }
     
+    print(f"🆕 Created new session {session_id}")
+    
     welcome_msg = "Hey! I'm Jordan. I used to be that person who'd rehearse conversations in the shower, then freeze when actually talking to people. Took me years to figure this out. Ready to start?"
     
     return jsonify({
         "success": True,
         "message": welcome_msg,
         "phase": 1,
-        "session_id": session_id
+        "session_id": session_id,
+        "reconnected": False
     })
+    
 
 @app.route("/submit-phase-data", methods=["POST"])
 def submit_phase_data():
