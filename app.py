@@ -651,8 +651,8 @@ def write_to_firebase(session_state):
     created_at = datetime.utcnow().isoformat()
     task_overview = generate_5_day_plan(session_state)
 
-    # Note: Using the non-private path for this example, assuming data sharing/public dashboard might be desired
-    doc_ref = db.collection(f"artifacts/{app.config.get('APP_ID', 'default-app-id')}/public/data/courses").document()
+    # Save to users/{user_id}/datedCourses/social_skills
+    doc_ref = db.collection("users").document(user_id).collection("datedcourses").document("social_skills")
     
     doc_ref.set({
         "user_id": user_id,
@@ -662,7 +662,8 @@ def write_to_firebase(session_state):
         "status": "active",
         "completion_rate": 0
     })
-    return doc_ref.id, task_overview
+    
+    return "social_skills", task_overview
 
 def extract_json_from_response(text):
     """Extract JSON from LLM response that might have markdown or extra text"""
