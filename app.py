@@ -888,7 +888,6 @@ Analyze the form data, extract the required information according to your phase 
         }), 500
 
 
-
 @app.route("/chat", methods=["POST"])
 def chat():
     """Main conversational endpoint with Jordan AI"""
@@ -927,69 +926,69 @@ def chat():
     phase = session_state.get("phase", 1)
     
     # 2. Phase 5: Confirmation conversation
-   if phase == 5:
-    # Check if user is confirming the plan
-    if any(word in user_message.lower() for word in ["yes", "looks good", "let's do it", "confirm", "correct", "yep", "yeah"]):
-        try:
-            # ✅ GENERATE THE PLAN
-            user_id = session_state["user_id"]
-            created_at = datetime.utcnow().isoformat()
-            task_overview = generate_5_day_plan(session_state)
-            doc_id = "social_skills"
+    if phase == 5:
+        # Check if user is confirming the plan
+        if any(word in user_message.lower() for word in ["yes", "looks good", "let's do it", "confirm", "correct", "yep", "yeah"]):
+            try:
+                # ✅ GENERATE THE PLAN
+                user_id = session_state["user_id"]
+                created_at = datetime.utcnow().isoformat()
+                task_overview = generate_5_day_plan(session_state)
+                doc_id = "social_skills"
+                
+                # ✅ SAVE TO FIREBASE: users/{user_id}/datedcourses/social_skills
+                course_ref = db.collection("users").document(user_id).collection("datedcourses").document(doc_id)
+                course_ref.set({
+                    "user_id": user_id,
+                    "created_at": created_at,
+                    "phase_data": session_state["phase_data"],
+                    "task_overview": task_overview,
+                    "status": "active",
+                    "completion_rate": 0
+                })
+                
+                # ✅ UPDATE SESSION: sessions/{user_id}
+                session_ref = db.collection("sessions").document(user_id)
+                session_ref.update({
+                    "phase": 6,
+                    "plan_generated": True,
+                    "course_id": doc_id,
+                    "task_overview": task_overview,
+                    "updated_at": firestore.SERVER_TIMESTAMP
+                })
+                
+                print(f"✅ Plan saved successfully to users/{user_id}/datedcourses/{doc_id}")
+                
+                return jsonify({
+                    "response": "🎉 Let's fucking go! Your 5-day plan is locked in. I'll be checking in on you. Day 1 starts tomorrow - no backing out now. You've got this.",
+                    "phase": 6,
+                    "plan_generated": True,
+                    "course_id": doc_id,
+                    "task_overview": task_overview,
+                    "complete": True
+                })
             
-            # ✅ SAVE TO FIREBASE: users/{user_id}/datedcourses/social_skills
-            course_ref = db.collection("users").document(user_id).collection("datedcourses").document(doc_id)
-            course_ref.set({
-                "user_id": user_id,
-                "created_at": created_at,
-                "phase_data": session_state["phase_data"],
-                "task_overview": task_overview,
-                "status": "active",
-                "completion_rate": 0
-            })
-            
-            # ✅ UPDATE SESSION: sessions/{user_id}
-            session_ref = db.collection("sessions").document(user_id)
-            session_ref.update({
-                "phase": 6,
-                "plan_generated": True,
-                "course_id": doc_id,
-                "task_overview": task_overview,
-                "updated_at": firestore.SERVER_TIMESTAMP
-            })
-            
-            print(f"✅ Plan saved successfully to users/{user_id}/datedcourses/{doc_id}")
-            
-            return jsonify({
-                "response": "🎉 Let's fucking go! Your 5-day plan is locked in. I'll be checking in on you. Day 1 starts tomorrow - no backing out now. You've got this.",
-                "phase": 6,
-                "plan_generated": True,
-                "course_id": doc_id,
-                "task_overview": task_overview,
-                "complete": True
-            })
+            except Exception as e:
+                full_traceback = traceback.format_exc()
+                print("--- /chat (Phase 5) FULL TRACEBACK ---")
+                print(full_traceback)
+                print("------------------------------------------")
+                
+                return jsonify({
+                    "error": "Failed to generate plan",
+                    "details": str(e),
+                    "traceback": full_traceback
+                }), 500
         
-        except Exception as e:
-            full_traceback = traceback.format_exc()
-            print("--- /chat (Phase 5) FULL TRACEBACK ---")
-            print(full_traceback)
-            print("------------------------------------------")
-            
+        # User wants to modify something
+        else:
             return jsonify({
-                "error": "Failed to generate plan",
-                "details": str(e),
-                "traceback": full_traceback
-            }), 500
-    
-    # User wants to modify something
-    else:
-        return jsonify({
-            "response": "No worries. What do you want to change? Your schedule, locations, or the skill we're focusing on?",
-            "phase": 5,
-            "phase_data": session_state.get("phase_data", {}),
-            "awaiting_modification": True
-        })
-        
+                "response": "No worries. What do you want to change? Your schedule, locations, or the skill we're focusing on?",
+                "phase": 5,
+                "phase_data": session_state.get("phase_data", {}),
+                "awaiting_modification": True
+            })
+            
     # 3. Phase 6: Plan already generated
     if phase == 6:
         return jsonify({
@@ -1046,9 +1045,6 @@ Respond according to your phase instructions.
         )
         
         full_prompt = f"{prompt_text}\n\n{context}"
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", full_prompt)
-        ])
         
         llm_output = llm.invoke([{"role": "system", "content": full_prompt}])
         parsed = extract_json_from_response(llm_output.content)
@@ -1118,10 +1114,6 @@ Respond according to your phase instructions.
             "traceback": full_traceback,
             "fallback_response": "Sorry, I hit a snag. Can you rephrase that?"
         }), 500
-
-
-
-
 
 
 
