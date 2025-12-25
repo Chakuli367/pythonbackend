@@ -341,8 +341,6 @@ PHASE_REQUIREMENTS = {
     4: ["analyzed_schedule", "optimal_times", "energy_map"]
 }
 
-sessions = {}
-
 # ================== ENHANCED AGENT PROMPTS ==================
 
 PHASE_1_PROMPT = """
@@ -687,62 +685,81 @@ def extract_json_from_response(text):
 
 # ================== ENDPOINTS ==================
 
+# ❌ Remove this line completely
+# sessions = {}
+
 @app.route("/init-session", methods=["POST"])
 def init_session():
     """Initialize a new session OR reconnect to existing"""
     data = request.json
-    session_id = data.get("session_id")
     user_id = data.get("user_id", "anonymous")
     
-    if not session_id:
-        return jsonify({"error": "session_id required"}), 400
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
     
-    # Check if session already exists
-    if session_id in sessions:
-        existing = sessions[session_id]
-        print(f"✅ Reconnecting to existing session {session_id} at phase {existing['phase']}")
+    # Check if session already exists in Firebase
+    try:
+        session_ref = db.collection("sessions").document(user_id)
+        session_doc = session_ref.get()
+        
+        if session_doc.exists:
+            existing = session_doc.to_dict()
+            print(f"✅ Reconnecting to existing session for {user_id} at phase {existing.get('phase', 1)}")
+            return jsonify({
+                "success": True,
+                "message": "Reconnected to your session. Let's continue!",
+                "phase": existing.get("phase", 1),
+                "user_id": user_id,
+                "reconnected": True
+            })
+        
+        # Initialize NEW session in Firebase
+        session_data = {
+            "phase": 1,
+            "user_id": user_id,
+            "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+            "messages": [],
+            "forms_completed": [],
+            "created_at": firestore.SERVER_TIMESTAMP
+        }
+        
+        session_ref.set(session_data)
+        print(f"🆕 Created new session for {user_id}")
+        
+        welcome_msg = "Hey! I'm Jordan. I used to be that person who'd rehearse conversations in the shower, then freeze when actually talking to people. Took me years to figure this out. Ready to start?"
+        
         return jsonify({
             "success": True,
-            "message": "Reconnected to your session. Let's continue!",
-            "phase": existing["phase"],
-            "session_id": session_id,
-            "reconnected": True
+            "message": welcome_msg,
+            "phase": 1,
+            "user_id": user_id,
+            "reconnected": False
         })
     
-    # Initialize NEW session
-    sessions[session_id] = {
-        "phase": 1,
-        "user_id": user_id,
-        "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
-        "messages": [],
-        "forms_completed": []
-    }
-    
-    print(f"🆕 Created new session {session_id}")
-    
-    welcome_msg = "Hey! I'm Jordan. I used to be that person who'd rehearse conversations in the shower, then freeze when actually talking to people. Took me years to figure this out. Ready to start?"
-    
-    return jsonify({
-        "success": True,
-        "message": welcome_msg,
-        "phase": 1,
-        "session_id": session_id,
-        "reconnected": False
-    })
-    
+    except Exception as e:
+        full_traceback = traceback.format_exc()
+        print("--- /init-session FULL TRACEBACK ---")
+        print(full_traceback)
+        print("------------------------------------------")
+        
+        return jsonify({
+            "error": "Session initialization failed",
+            "details": str(e),
+            "traceback": full_traceback
+        }), 500
 
 @app.route("/submit-phase-data", methods=["POST"])
 def submit_phase_data():
     """Process frontend form data with AI analysis and extraction"""
     data = request.json
-    session_id = data.get("session_id")
+    user_id = data.get("user_id")  # ✅ Changed from session_id
     phase = data.get("phase")
     form_data = data.get("form_data")
     api_key = data.get("api_key")
     
     # 1. Input Validation
-    if not session_id or session_id not in sessions:
-        return jsonify({"error": "invalid session_id"}), 400
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
     
     if not api_key:
         return jsonify({"error": "api_key required"}), 400
@@ -750,39 +767,46 @@ def submit_phase_data():
     if not form_data:
         return jsonify({"error": "form_data required"}), 400
     
-    session_state = sessions[session_id]
+    # 2. Get session from Firebase
+    try:
+        session_ref = db.collection("sessions").document(user_id)
+        session_doc = session_ref.get()
+        
+        if not session_doc.exists:
+            return jsonify({"error": "Session not found. Please call /init-session first."}), 404
+        
+        session_state = session_doc.to_dict()
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to load session: {str(e)}"}), 500
     
     try:
-        # 2. Get the appropriate prompt and prepare data
+        # 3. Get the appropriate prompt and prepare data
         prompt_template_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
         
-        # Prepare the dynamic data as JSON strings (no need for manual double-brace escaping)
+        # Prepare the dynamic data as JSON strings
         form_data_str = json.dumps(form_data, indent=2)
-        prev_data_str = json.dumps(session_state["phase_data"], indent=2)
+        prev_data_str = json.dumps(session_state.get("phase_data", {}), indent=2)
         
-        # 3. Define the LLM Context Template
-        # We use template placeholders {{variable_name}} for dynamic data
-        # to cleanly separate them from the LLM's required JSON output.
-        context_template = f"""
-{{prompt_text}}
+        # 4. Define the LLM Context Template
+        context_template = """
+{prompt_text}
 
-USER'S FORM SUBMISSION FOR PHASE {{phase_num}}:
-{{form_data_str}}
+USER'S FORM SUBMISSION FOR PHASE {phase_num}:
+{form_data_str}
 
 PREVIOUSLY COLLECTED DATA:
-{{prev_data_str}}
+{prev_data_str}
 
 Analyze the form data, extract the required information according to your phase instructions, and respond in the specified JSON format.
 """
         
-        # 4. Create the ChatPromptTemplate
-        # The template itself is a single System Message
+        # 5. Create the ChatPromptTemplate
         prompt = ChatPromptTemplate.from_messages([
             ("system", context_template)
         ])
         
-        # 5. Invoke LLM with ALL required variables filled in
-        # We pass the template text itself as a variable
+        # 6. Invoke LLM
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             temperature=0.7,
@@ -790,13 +814,13 @@ Analyze the form data, extract the required information according to your phase 
         )
         
         llm_output = llm.invoke(prompt.format_messages(
-            prompt_text=prompt_template_text, # Inject the phase-specific instructions here
+            prompt_text=prompt_template_text,
             phase_num=phase,
             form_data_str=form_data_str,
             prev_data_str=prev_data_str
         ))
         
-        # 6. Parse and Process Response
+        # 7. Parse and Process Response
         parsed = extract_json_from_response(llm_output.content)
         
         if not parsed:
@@ -811,7 +835,9 @@ Analyze the form data, extract the required information according to your phase 
             store_extracted(session_state, extracted_data)
         
         # Store the form completion
-        session_state["forms_completed"].append(phase)
+        forms_completed = session_state.get("forms_completed", [])
+        if phase not in forms_completed:
+            forms_completed.append(phase)
         
         # Get response message
         response_msg = parsed.get("message", "Data received.")
@@ -820,12 +846,25 @@ Analyze the form data, extract the required information according to your phase 
         ready_for_next = parsed.get("ready_for_next_phase", False)
         
         if ready_for_next and phase < 5:
-            session_state["phase"] = phase + 1
             next_phase = phase + 1
         else:
             next_phase = phase
         
-        # 7. Success Response
+        # 8. Update Firebase (not in-memory)
+        try:
+            session_ref.update({
+                "phase": next_phase,
+                "phase_data": session_state["phase_data"],
+                "forms_completed": forms_completed,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            })
+        except Exception as e:
+            return jsonify({
+                "error": "Failed to save progress to Firebase",
+                "details": str(e)
+            }), 500
+        
+        # 9. Success Response
         return jsonify({
             "success": True,
             "response": response_msg,
@@ -836,7 +875,7 @@ Analyze the form data, extract the required information according to your phase 
         })
     
     except Exception as e:
-        # 8. Error Handling
+        # 10. Error Handling
         full_traceback = traceback.format_exc()
         print("--- /submit-phase-data FULL TRACEBACK ---")
         print(full_traceback)
@@ -847,41 +886,61 @@ Analyze the form data, extract the required information according to your phase 
             "details": str(e),
             "traceback": full_traceback
         }), 500
-        
+
 
 
 @app.route("/chat", methods=["POST"])
 def chat():
     """Main conversational endpoint with Jordan AI"""
     data = request.json
-    session_id = data.get("session_id")
+    user_id = data.get("user_id")  # ✅ Changed from session_id
     user_message = data.get("message", "")
     api_key = data.get("api_key")
-    user_id = data.get("user_id", "anonymous")
 
-    if not session_id or not api_key:
-        return jsonify({"error": "session_id and api_key required"}), 400
+    if not user_id or not api_key:
+        return jsonify({"error": "user_id and api_key required"}), 400
 
-    # Initialize session if new
-    if session_id not in sessions:
-        sessions[session_id] = {
-            "phase": 1,
-            "user_id": user_id,
-            "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
-            "messages": [],
-            "forms_completed": []
-        }
+    # 1. Get or initialize session from Firebase
+    try:
+        session_ref = db.collection("sessions").document(user_id)
+        session_doc = session_ref.get()
+        
+        if not session_doc.exists:
+            # Auto-initialize new session
+            session_state = {
+                "phase": 1,
+                "user_id": user_id,
+                "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+                "messages": [],
+                "forms_completed": [],
+                "created_at": firestore.SERVER_TIMESTAMP
+            }
+            session_ref.set(session_state)
+        else:
+            session_state = session_doc.to_dict()
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to load session: {str(e)}"
+        }), 500
 
-    session_state = sessions[session_id]
-    phase = session_state["phase"]
+    phase = session_state.get("phase", 1)
     
-    # Phase 5: Confirmation conversation
+    # 2. Phase 5: Confirmation conversation
     if phase == 5:
         # Check if user is confirming the plan
         if any(word in user_message.lower() for word in ["yes", "looks good", "let's do it", "confirm", "correct", "yep", "yeah"]):
             try:
                 doc_id, task_overview = write_to_firebase(session_state)
-                session_state["phase"] = 6  # Complete
+                
+                # Update phase to 6 (Complete)
+                session_ref.update({
+                    "phase": 6,
+                    "plan_generated": True,
+                    "course_id": doc_id,
+                    "task_overview": task_overview,
+                    "updated_at": firestore.SERVER_TIMESTAMP
+                })
                 
                 return jsonify({
                     "response": "🎉 Let's fucking go! Your 5-day plan is locked in. I'll be checking in on you. Day 1 starts tomorrow - no backing out now. You've got this.",
@@ -909,11 +968,11 @@ def chat():
             return jsonify({
                 "response": "No worries. What do you want to change? Your schedule, locations, or the skill we're focusing on?",
                 "phase": 5,
-                "phase_data": session_state["phase_data"],
+                "phase_data": session_state.get("phase_data", {}),
                 "awaiting_modification": True
             })
     
-    # Phase 6: Plan already generated
+    # 3. Phase 6: Plan already generated
     if phase == 6:
         return jsonify({
             "response": "Your plan is already generated! Check your dashboard to see your 5-day roadmap.",
@@ -921,10 +980,11 @@ def chat():
             "complete": True
         })
     
-    # Phases 1-4: Regular chat with AI agent
+    # 4. Phases 1-4: Regular chat with AI agent
     try:
         # Store user message
-        session_state["messages"].append({"role": "user", "content": user_message})
+        messages = session_state.get("messages", [])
+        messages.append({"role": "user", "content": user_message})
         
         # Get the appropriate prompt for current phase
         prompt_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
@@ -932,8 +992,8 @@ def chat():
         # Build context with collected data
         context_data = {
             "phase": phase,
-            "collected_data": session_state["phase_data"],
-            "conversation_history": session_state["messages"][-5:],
+            "collected_data": session_state.get("phase_data", {}),
+            "conversation_history": messages[-5:],  # Last 5 messages
             "user_message": user_message
         }
 
@@ -955,7 +1015,7 @@ Respond according to your phase instructions.
         # Format with proper JSON serialization
         context = context_template.format(
             phase=phase,
-            collected_data_str=json.dumps(session_state["phase_data"], indent=2),
+            collected_data_str=json.dumps(session_state.get("phase_data", {}), indent=2),
             conversation_history_str=json.dumps(context_data["conversation_history"], indent=2),
             user_message=user_message
         )
@@ -977,33 +1037,54 @@ Respond according to your phase instructions.
         
         if not parsed:
             # Fallback if JSON parsing fails
+            ai_reply = llm_output.content
+            messages.append({"role": "assistant", "content": ai_reply})
+            
+            session_ref.update({
+                "messages": messages,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            })
+            
             return jsonify({
-                "response": llm_output.content,
+                "response": ai_reply,
                 "phase": phase,
-                "phase_data": session_state["phase_data"]
+                "phase_data": session_state.get("phase_data", {})
             })
         
         # Store AI response
-        session_state["messages"].append({
+        ai_reply = parsed.get("message", llm_output.content)
+        messages.append({
             "role": "assistant", 
-            "content": parsed.get("message", llm_output.content)
+            "content": ai_reply
         })
         
         # Check if phase is ready to advance
         if parsed.get("ready_for_next_phase"):
-            session_state["phase"] = phase + 1
+            new_phase = phase + 1
+            
+            session_ref.update({
+                "phase": new_phase,
+                "messages": messages,
+                "updated_at": firestore.SERVER_TIMESTAMP
+            })
+            
             return jsonify({
-                "response": parsed.get("message"),
-                "phase": session_state["phase"],
-                "phase_data": session_state["phase_data"],
+                "response": ai_reply,
+                "phase": new_phase,
+                "phase_data": session_state.get("phase_data", {}),
                 "phase_complete": True
             })
         
         # Continue current phase
+        session_ref.update({
+            "messages": messages,
+            "updated_at": firestore.SERVER_TIMESTAMP
+        })
+        
         return jsonify({
-            "response": parsed.get("message"),
+            "response": ai_reply,
             "phase": phase,
-            "phase_data": session_state["phase_data"],
+            "phase_data": session_state.get("phase_data", {}),
             "needs_more_info": parsed.get("needs_more_info", True)
         })
     
@@ -1019,51 +1100,45 @@ Respond according to your phase instructions.
             "traceback": full_traceback,
             "fallback_response": "Sorry, I hit a snag. Can you rephrase that?"
         }), 500
-        
+
+
+
+
+
+
+
+
 @app.route("/get-session-status", methods=["POST"])
 def get_session_status():
     """Get current session status"""
     data = request.json
-    session_id = data.get("session_id")
+    user_id = data.get("user_id")
     
-    if not session_id or session_id not in sessions:
-        return jsonify({"error": "invalid session_id"}), 404
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
     
-    session_state = sessions[session_id]
-    
-    return jsonify({
-        "session_id": session_id,
-        "phase": session_state["phase"],
-        "phase_data": session_state["phase_data"],
-        "forms_completed": session_state["forms_completed"],
-        "message_count": len(session_state["messages"])
-    })
-
-@app.route("/get-plan/<course_id>", methods=["GET"])
-def get_plan(course_id):
-    """Retrieve a generated plan from Firebase"""
     try:
-        user_id = request.args.get("user_id")
-        if not user_id:
-            return jsonify({"error": "user_id required"}), 400
+        session_ref = db.collection("sessions").document(user_id)
+        session_doc = session_ref.get()
         
-        if not db:
-            return jsonify({"error": "Firebase not initialized"}), 500
+        if not session_doc.exists:
+            return jsonify({"error": "Session not found"}), 404
         
-        doc_ref = db.collection("users").document(user_id).collection("courses").document(course_id)
-        doc = doc_ref.get()
+        session_state = session_doc.to_dict()
         
-        if not doc.exists:
-            return jsonify({"error": "Plan not found"}), 404
-        
-        return jsonify(doc.to_dict())
+        return jsonify({
+            "user_id": user_id,
+            "phase": session_state.get("phase", 1),
+            "phase_data": session_state.get("phase_data", {}),
+            "forms_completed": session_state.get("forms_completed", []),
+            "message_count": len(session_state.get("messages", []))
+        })
     
     except Exception as e:
         return jsonify({
-            "error": "Failed to retrieve plan",
-            "details": str(e)
+            "error": f"Failed to get session: {str(e)}"
         }), 500
-
+        
 @app.route("/update-task", methods=["POST"])
 def update_task():
     """Mark a task as complete and update progress"""
@@ -1125,19 +1200,26 @@ def update_task():
 def reset_session():
     """Reset a session (for testing or user restart)"""
     data = request.json
-    session_id = data.get("session_id")
+    user_id = data.get("user_id")
     
-    if session_id and session_id in sessions:
-        del sessions[session_id]
-        return jsonify({"success": True, "message": "Session reset"})
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
     
-    return jsonify({"error": "Session not found"}), 404
+    try:
+        session_ref = db.collection("sessions").document(user_id)
+        session_ref.delete()
+        
+        return jsonify({
+            "success": True, 
+            "message": "Session reset successfully"
+        })
+    
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to reset session: {str(e)}"
+        }), 500
 
-if __name__ == "__main__":
-    # Ensure APP_ID is set if not already done via environment config
-    app.config['APP_ID'] = os.environ.get('APP_ID', 'default-app-id')
-    app.run(debug=True, port=5000)
-    
+
 
 
 @app.route('/api/judge-story', methods=['POST', 'OPTIONS'])
