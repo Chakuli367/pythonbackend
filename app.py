@@ -639,6 +639,7 @@ def generate_5_day_plan(session_state):
         }
     }
 
+
 def write_to_firebase(session_state):
     """Save completed session data to Firebase"""
     if not db:
@@ -649,8 +650,11 @@ def write_to_firebase(session_state):
     created_at = datetime.utcnow().isoformat()
     task_overview = generate_5_day_plan(session_state)
 
-    # Save to users/{user_id}/datedCourses/social_skills
-    doc_ref = db.collection("users").document(user_id).collection("datedcourses").document("social_skills")
+    # ✅ CHANGED: Save to life_skills
+    doc_id = "life_skills"  # ← FIXED HERE
+    
+    # Save to users/{user_id}/datedcourses/life_skills
+    doc_ref = db.collection("users").document(user_id).collection("datedcourses").document(doc_id)
     
     doc_ref.set({
         "user_id": user_id,
@@ -659,9 +663,10 @@ def write_to_firebase(session_state):
         "task_overview": task_overview,
         "status": "active",
         "completion_rate": 0
-    })
+    }, merge=True)  # ← ADDED merge=True
     
-    return "social_skills", task_overview
+    return doc_id, task_overview  # ← CHANGED return value
+    
 
 def extract_json_from_response(text):
     """Extract JSON from LLM response that might have markdown or extra text"""
@@ -934,9 +939,11 @@ def chat():
                 user_id = session_state["user_id"]
                 created_at = datetime.utcnow().isoformat()
                 task_overview = generate_5_day_plan(session_state)
-                doc_id = "social_skills"
                 
-                # ✅ SAVE TO FIREBASE: users/{user_id}/datedcourses/social_skills
+                # ✅ CHANGED: Save to life_skills instead of social_skills
+                doc_id = "life_skills"  # ← FIXED HERE
+                
+                # ✅ SAVE TO FIREBASE: users/{user_id}/datedcourses/life_skills
                 course_ref = db.collection("users").document(user_id).collection("datedcourses").document(doc_id)
                 course_ref.set({
                     "user_id": user_id,
@@ -945,15 +952,14 @@ def chat():
                     "task_overview": task_overview,
                     "status": "active",
                     "completion_rate": 0
-                })
+                }, merge=True)  # ← ADDED merge=True for safety
                 
-                # ✅ UPDATE SESSION: sessions/{user_id}
+                # ✅ UPDATE SESSION: sessions/{user_id} (just for tracking)
                 session_ref = db.collection("sessions").document(user_id)
                 session_ref.update({
                     "phase": 6,
                     "plan_generated": True,
                     "course_id": doc_id,
-                    "task_overview": task_overview,
                     "updated_at": firestore.SERVER_TIMESTAMP
                 })
                 
