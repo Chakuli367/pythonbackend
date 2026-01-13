@@ -3131,6 +3131,144 @@ def reply_day_chat():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/mentor-chat', methods=['POST', 'OPTIONS'])
+def mentor_chat():
+    """
+    AI Mentor chatbot - someone who's been through what you're going through
+    Provides empathetic, experience-based advice
+    """
+    if request.method == 'OPTIONS':
+        return '', 204  # Handle preflight
+    
+    try:
+        data = request.get_json()
+        user_id = data.get("user_id")
+        user_message = data.get("message", "").strip()
+        conversation_id = data.get("conversation_id", "")
+        
+        # Validation
+        if not user_id or not user_message:
+            return jsonify({"error": "Missing user_id or message"}), 400
+        
+        # Get API key from Authorization header
+        api_key = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            api_key = auth_header[len("Bearer "):].strip()
+        
+        if not api_key:
+            return jsonify({"error": "Missing API key in Authorization header"}), 401
+        
+        # Initialize client with provided API key
+        client.api_key = api_key
+        
+        # Generate conversation_id if not provided
+        if not conversation_id:
+            conversation_id = f"mentor_{user_id}_{int(time.time())}"
+        
+        # Load conversation history from Firebase
+        doc_ref = db.collection("mentor_conversations").document(conversation_id)
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            history = doc.to_dict().get("messages", [])
+        else:
+            # First time: load the mentor prompt
+            mentor_prompt = load_prompt("prompt_mentor.txt")
+            if not mentor_prompt:
+                return jsonify({"error": "prompt_mentor.txt not found"}), 500
+            
+            history = [{"role": "system", "content": mentor_prompt}]
+        
+        # Append user message to history
+        history.append({"role": "user", "content": user_message})
+        
+        # Call the AI model
+        response = client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=history,
+            temperature=0.7,
+            max_tokens=400
+        )
+        
+        ai_reply = response.choices[0].message.content.strip()
+        
+        # Append AI response to history
+        history.append({"role": "assistant", "content": ai_reply})
+        
+        # Save updated conversation to Firebase
+        doc_ref.set({
+            "messages": history,
+            "user_id": user_id,
+            "last_updated": firestore.SERVER_TIMESTAMP,
+            "conversation_type": "mentor"
+        }, merge=True)
+        
+        # Return response
+        return jsonify({
+            "success": True,
+            "reply": ai_reply,
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        import traceback
+        print("--- /mentor-chat ERROR ---")
+        print(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        }), 500
+
+
+@app.route('/mentor-chat/new', methods=['POST', 'OPTIONS'])
+def start_new_mentor_chat():
+    """Start a fresh mentor conversation"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    data = request.get_json()
+    user_id = data.get("user_id")
+    
+    if not user_id:
+        return jsonify({"error": "Missing user_id"}), 400
+    
+    conversation_id = f"mentor_{user_id}_{int(time.time())}"
+    
+    return jsonify({
+        "success": True,
+        "conversation_id": conversation_id,
+        "message": "New conversation started. How can I help today?"
+    })
+
+
+@app.route('/mentor-chat/history/<conversation_id>', methods=['GET'])
+def get_mentor_history(conversation_id):
+    """Get conversation history"""
+    try:
+        doc_ref = db.collection("mentor_conversations").document(conversation_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return jsonify({"error": "Conversation not found"}), 404
+        
+        doc_data = doc.to_dict()
+        # Filter out system messages for frontend display
+        messages = [
+            msg for msg in doc_data.get("messages", [])
+            if msg.get("role") != "system"
+        ]
+        
+        return jsonify({
+            "success": True,
+            "messages": messages,
+            "conversation_id": conversation_id
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/finalize-day-chat', methods=['POST'])
 def finalize_day_chat():
