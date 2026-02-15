@@ -850,8 +850,17 @@ Analyze the form data, extract the required information according to your phase 
         # Check if ready to advance
         ready_for_next = parsed.get("ready_for_next_phase", False)
         
+        # ✅ FIXED: Initialize task_overview
+        task_overview = None
+        
         if ready_for_next and phase < 5:
             next_phase = phase + 1
+            
+            # ✅ Generate plan preview when entering phase 5
+            if next_phase == 5:
+                print(f"🔄 Generating 5-day plan preview for phase 5...")
+                task_overview = generate_5_day_plan(session_state)
+                print(f"✅ Plan preview generated with {len(task_overview.get('days', []))} days")
         else:
             next_phase = phase
         
@@ -870,14 +879,21 @@ Analyze the form data, extract the required information according to your phase 
             }), 500
         
         # 9. Success Response
-        return jsonify({
+        response_data = {
             "success": True,
             "response": response_msg,
             "phase": next_phase,
             "phase_data": session_state["phase_data"],
             "extracted_data": extracted_data,
             "ready_for_next_phase": ready_for_next
-        })
+        }
+        
+        # ✅ Include task_overview if we just entered phase 5
+        if next_phase == 5 and task_overview:
+            response_data["task_overview"] = task_overview
+            print(f"📤 Sending task_overview to frontend with {len(task_overview.get('days', []))} days")
+        
+        return jsonify(response_data)
     
     except Exception as e:
         # 10. Error Handling
@@ -891,6 +907,7 @@ Analyze the form data, extract the required information according to your phase 
             "details": str(e),
             "traceback": full_traceback
         }), 500
+        
 
 
 @app.route("/chat", methods=["POST"])
