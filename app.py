@@ -909,7 +909,6 @@ Analyze the form data, extract the required information according to your phase 
         }), 500
         
 
-
 @app.route("/chat", methods=["POST"])
 def chat():
     """Main conversational endpoint with Jordan AI"""
@@ -949,47 +948,47 @@ def chat():
     
     # 2. Phase 5: Confirmation conversation
     if phase == 5:
-    # Check if user is confirming
-    if any(word in user_message.lower() for word in ["yes", "looks good", "let's do it", "confirm", "correct", "yep", "yeah"]):
-        try:
-            user_id = session_state["user_id"]
-            created_at = datetime.utcnow().isoformat()
-            task_overview = generate_5_day_plan(session_state)
-            
-            doc_id = "life_skills"
-            course_ref = db.collection("users").document(user_id).collection("datedcourses").document(doc_id)
-            course_ref.set({
-                "user_id": user_id,
-                "created_at": created_at,
-                "phase_data": session_state["phase_data"],
-                "task_overview": task_overview,
-                "status": "active",
-                "completion_rate": 0
-            }, merge=True)
-            
-            session_ref.update({
-                "phase": 6,
-                "plan_generated": True,
-                "course_id": doc_id,
-                "updated_at": firestore.SERVER_TIMESTAMP
-            })
-            
-            return jsonify({
-                "response": "🎉 Let's fucking go! Your 5-day plan is locked in.",
-                "phase": 6,
-                "plan_generated": True,
-                "course_id": doc_id,
-                "task_overview": task_overview,
-                "complete": True
-            })
-        except Exception as e:
-            return jsonify({"error": "Failed to generate plan", "details": str(e)}), 500
+        # Check if user is confirming
+        if any(word in user_message.lower() for word in ["yes", "looks good", "let's do it", "confirm", "correct", "yep", "yeah"]):
+            try:
+                user_id = session_state["user_id"]
+                created_at = datetime.utcnow().isoformat()
+                task_overview = generate_5_day_plan(session_state)
+                
+                doc_id = "life_skills"
+                course_ref = db.collection("users").document(user_id).collection("datedcourses").document(doc_id)
+                course_ref.set({
+                    "user_id": user_id,
+                    "created_at": created_at,
+                    "phase_data": session_state["phase_data"],
+                    "task_overview": task_overview,
+                    "status": "active",
+                    "completion_rate": 0
+                }, merge=True)
+                
+                session_ref.update({
+                    "phase": 6,
+                    "plan_generated": True,
+                    "course_id": doc_id,
+                    "updated_at": firestore.SERVER_TIMESTAMP
+                })
+                
+                return jsonify({
+                    "response": "🎉 Let's fucking go! Your 5-day plan is locked in.",
+                    "phase": 6,
+                    "plan_generated": True,
+                    "course_id": doc_id,
+                    "task_overview": task_overview,
+                    "complete": True
+                })
+            except Exception as e:
+                return jsonify({"error": "Failed to generate plan", "details": str(e)}), 500
 
-    # ✅ NEW: Call LLM to generate confirmation summary
-    else:
-        try:
-            prompt_text = PHASE_5_CONFIRMATION_PROMPT
-            context = f"""
+        # ✅ NEW: Call LLM to generate confirmation summary
+        elif not any(word in user_message.lower() for word in ["no", "change", "modify", "different"]):
+            try:
+                prompt_text = PHASE_5_CONFIRMATION_PROMPT
+                context = f"""
 COLLECTED DATA:
 {json.dumps(session_state.get("phase_data", {}), indent=2)}
 
@@ -997,37 +996,36 @@ USER MESSAGE: {user_message}
 
 Generate a confirmation summary based on all collected data.
 """
-            llm = ChatGroq(
-                model="llama-3.3-70b-versatile",
-                temperature=0.7,
-                groq_api_key=api_key
-            )
-            
-            full_prompt = f"{prompt_text}\n\n{context}"
-            llm_output = llm.invoke([{"role": "system", "content": full_prompt}])
-            parsed = extract_json_from_response(llm_output.content)
-            
-            if not parsed:
+                llm = ChatGroq(
+                    model="llama-3.3-70b-versatile",
+                    temperature=0.7,
+                    groq_api_key=api_key
+                )
+                
+                full_prompt = f"{prompt_text}\n\n{context}"
+                llm_output = llm.invoke([{"role": "system", "content": full_prompt}])
+                parsed = extract_json_from_response(llm_output.content)
+                
+                if not parsed:
+                    return jsonify({
+                        "response": "Here's what we've got. Let me summarize your plan. Sound right?",
+                        "phase": 5
+                    })
+                
+                # ✅ Return confirmation_summary to frontend
                 return jsonify({
-                    "response": "Here's what we've got. Let me summarize your plan. Sound right?",
-                    "phase": 5
+                    "response": parsed.get("message", ""),
+                    "confirmation_summary": parsed.get("confirmation_summary", {}),  # ✅ THIS IS WHAT FRONTEND NEEDS
+                    "phase": 5,
+                    "ready_to_generate_plan": parsed.get("ready_to_generate_plan", False)
                 })
             
-            # ✅ Return confirmation_summary to frontend
-            return jsonify({
-                "response": parsed.get("message", ""),
-                "confirmation_summary": parsed.get("confirmation_summary", {}),  # ✅ THIS IS WHAT FRONTEND NEEDS
-                "phase": 5,
-                "ready_to_generate_plan": parsed.get("ready_to_generate_plan", False)
-            })
-        
-        except Exception as e:
-            return jsonify({
-                "error": "AI processing failed",
-                "details": str(e)
-            }), 500
-            
-        
+            except Exception as e:
+                return jsonify({
+                    "error": "AI processing failed",
+                    "details": str(e)
+                }), 500
+
         # User wants to modify something
         else:
             return jsonify({
@@ -1038,7 +1036,7 @@ Generate a confirmation summary based on all collected data.
             })
             
     # 3. Phase 6: Plan already generated
-    if phase == 6:
+    elif phase == 6:
         return jsonify({
             "response": "Your plan is already generated! Check your dashboard to see your 5-day roadmap.",
             "phase": 6,
@@ -1046,24 +1044,25 @@ Generate a confirmation summary based on all collected data.
         })
     
     # 4. Phases 1-4: Regular chat with AI agent
-    try:
-        # Store user message
-        messages = session_state.get("messages", [])
-        messages.append({"role": "user", "content": user_message})
-        
-        # Get the appropriate prompt for current phase
-        prompt_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
-        
-        # Build context with collected data
-        context_data = {
-            "phase": phase,
-            "collected_data": session_state.get("phase_data", {}),
-            "conversation_history": messages[-5:],  # Last 5 messages
-            "user_message": user_message
-        }
+    else:
+        try:
+            # Store user message
+            messages = session_state.get("messages", [])
+            messages.append({"role": "user", "content": user_message})
+            
+            # Get the appropriate prompt for current phase
+            prompt_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
+            
+            # Build context with collected data
+            context_data = {
+                "phase": phase,
+                "collected_data": session_state.get("phase_data", {}),
+                "conversation_history": messages[-5:],  # Last 5 messages
+                "user_message": user_message
+            }
 
-        # Build context WITHOUT f-strings to avoid JSON escaping issues
-        context_template = """
+            # Build context WITHOUT f-strings to avoid JSON escaping issues
+            context_template = """
 CURRENT PHASE: {phase}
 
 COLLECTED DATA SO FAR:
@@ -1076,32 +1075,68 @@ USER'S LATEST MESSAGE: {user_message}
 
 Respond according to your phase instructions.
 """
-        
-        # Format with proper JSON serialization
-        context = context_template.format(
-            phase=phase,
-            collected_data_str=json.dumps(session_state.get("phase_data", {}), indent=2),
-            conversation_history_str=json.dumps(context_data["conversation_history"], indent=2),
-            user_message=user_message
-        )
-        
-        # Call LLM
-        llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0.7,
-            groq_api_key=api_key
-        )
-        
-        full_prompt = f"{prompt_text}\n\n{context}"
-        
-        llm_output = llm.invoke([{"role": "system", "content": full_prompt}])
-        parsed = extract_json_from_response(llm_output.content)
-        
-        if not parsed:
-            # Fallback if JSON parsing fails
-            ai_reply = llm_output.content
-            messages.append({"role": "assistant", "content": ai_reply})
             
+            # Format with proper JSON serialization
+            context = context_template.format(
+                phase=phase,
+                collected_data_str=json.dumps(session_state.get("phase_data", {}), indent=2),
+                conversation_history_str=json.dumps(context_data["conversation_history"], indent=2),
+                user_message=user_message
+            )
+            
+            # Call LLM
+            llm = ChatGroq(
+                model="llama-3.3-70b-versatile",
+                temperature=0.7,
+                groq_api_key=api_key
+            )
+            
+            full_prompt = f"{prompt_text}\n\n{context}"
+            
+            llm_output = llm.invoke([{"role": "system", "content": full_prompt}])
+            parsed = extract_json_from_response(llm_output.content)
+            
+            if not parsed:
+                # Fallback if JSON parsing fails
+                ai_reply = llm_output.content
+                messages.append({"role": "assistant", "content": ai_reply})
+                
+                session_ref.update({
+                    "messages": messages,
+                    "updated_at": firestore.SERVER_TIMESTAMP
+                })
+                
+                return jsonify({
+                    "response": ai_reply,
+                    "phase": phase,
+                    "phase_data": session_state.get("phase_data", {})
+                })
+            
+            # Store AI response
+            ai_reply = parsed.get("message", llm_output.content)
+            messages.append({
+                "role": "assistant", 
+                "content": ai_reply
+            })
+            
+            # Check if phase is ready to advance
+            if parsed.get("ready_for_next_phase"):
+                new_phase = phase + 1
+                
+                session_ref.update({
+                    "phase": new_phase,
+                    "messages": messages,
+                    "updated_at": firestore.SERVER_TIMESTAMP
+                })
+                
+                return jsonify({
+                    "response": ai_reply,
+                    "phase": new_phase,
+                    "phase_data": session_state.get("phase_data", {}),
+                    "phase_complete": True
+                })
+            
+            # Continue current phase
             session_ref.update({
                 "messages": messages,
                 "updated_at": firestore.SERVER_TIMESTAMP
@@ -1110,60 +1145,23 @@ Respond according to your phase instructions.
             return jsonify({
                 "response": ai_reply,
                 "phase": phase,
-                "phase_data": session_state.get("phase_data", {})
+                "phase_data": session_state.get("phase_data", {}),
+                "needs_more_info": parsed.get("needs_more_info", True)
             })
         
-        # Store AI response
-        ai_reply = parsed.get("message", llm_output.content)
-        messages.append({
-            "role": "assistant", 
-            "content": ai_reply
-        })
-        
-        # Check if phase is ready to advance
-        if parsed.get("ready_for_next_phase"):
-            new_phase = phase + 1
-            
-            session_ref.update({
-                "phase": new_phase,
-                "messages": messages,
-                "updated_at": firestore.SERVER_TIMESTAMP
-            })
+        except Exception as e:
+            full_traceback = traceback.format_exc()
+            print("--- /chat FULL TRACEBACK ---")
+            print(full_traceback)
+            print("------------------------------------------")
             
             return jsonify({
-                "response": ai_reply,
-                "phase": new_phase,
-                "phase_data": session_state.get("phase_data", {}),
-                "phase_complete": True
-            })
-        
-        # Continue current phase
-        session_ref.update({
-            "messages": messages,
-            "updated_at": firestore.SERVER_TIMESTAMP
-        })
-        
-        return jsonify({
-            "response": ai_reply,
-            "phase": phase,
-            "phase_data": session_state.get("phase_data", {}),
-            "needs_more_info": parsed.get("needs_more_info", True)
-        })
-    
-    except Exception as e:
-        full_traceback = traceback.format_exc()
-        print("--- /chat FULL TRACEBACK ---")
-        print(full_traceback)
-        print("------------------------------------------")
-        
-        return jsonify({
-            "error": "AI processing failed",
-            "details": str(e),
-            "traceback": full_traceback,
-            "fallback_response": "Sorry, I hit a snag. Can you rephrase that?"
-        }), 500
-
-
+                "error": "AI processing failed",
+                "details": str(e),
+                "traceback": full_traceback,
+                "fallback_response": "Sorry, I hit a snag. Can you rephrase that?"
+            }), 500
+            
 
 
 @app.route("/get-session-status", methods=["POST"])
