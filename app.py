@@ -752,12 +752,11 @@ def init_session():
             "details": str(e),
             "traceback": full_traceback
         }), 500
-
 @app.route("/submit-phase-data", methods=["POST"])
 def submit_phase_data():
     """Process frontend form data with AI analysis and extraction"""
     data = request.json
-    user_id = data.get("user_id")  # ✅ Changed from session_id
+    user_id = data.get("user_id")
     phase = data.get("phase")
     form_data = data.get("form_data")
     api_key = data.get("api_key")
@@ -778,16 +777,16 @@ def submit_phase_data():
         session_doc = session_ref.get()
         
         if not session_doc.exists:
-    session_ref.set({
-        "phase": 1,
-        "user_id": user_id,
-        "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
-        "messages": [],
-        "forms_completed": [],
-        "created_at": firestore.SERVER_TIMESTAMP
-    })
-    session_state = session_ref.get().to_dict()
+            session_ref.set({
+                "phase": 1,
+                "user_id": user_id,
+                "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+                "messages": [],
+                "forms_completed": [],
+                "created_at": firestore.SERVER_TIMESTAMP
+            })
         
+        session_state = session_ref.get().to_dict()
         
     except Exception as e:
         return jsonify({"error": f"Failed to load session: {str(e)}"}), 500
@@ -857,13 +856,10 @@ Analyze the form data, extract the required information according to your phase 
         # Check if ready to advance
         ready_for_next = parsed.get("ready_for_next_phase", False)
         
-        # ✅ FIXED: Initialize task_overview
         task_overview = None
         
         if ready_for_next and phase < 5:
             next_phase = phase + 1
-            
-            # ✅ Generate plan preview when entering phase 5
             if next_phase == 5:
                 print(f"🔄 Generating 5-day plan preview for phase 5...")
                 task_overview = generate_5_day_plan(session_state)
@@ -871,7 +867,7 @@ Analyze the form data, extract the required information according to your phase 
         else:
             next_phase = phase
         
-        # 8. Update Firebase (not in-memory)
+        # 8. Update Firebase
         try:
             session_ref.update({
                 "phase": next_phase,
@@ -895,7 +891,6 @@ Analyze the form data, extract the required information according to your phase 
             "ready_for_next_phase": ready_for_next
         }
         
-        # ✅ Include task_overview if we just entered phase 5
         if next_phase == 5 and task_overview:
             response_data["task_overview"] = task_overview
             print(f"📤 Sending task_overview to frontend with {len(task_overview.get('days', []))} days")
@@ -903,7 +898,6 @@ Analyze the form data, extract the required information according to your phase 
         return jsonify(response_data)
     
     except Exception as e:
-        # 10. Error Handling
         full_traceback = traceback.format_exc()
         print("--- /submit-phase-data FULL TRACEBACK ---")
         print(full_traceback)
