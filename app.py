@@ -778,9 +778,16 @@ def submit_phase_data():
         session_doc = session_ref.get()
         
         if not session_doc.exists:
-            return jsonify({"error": "Session not found. Please call /init-session first."}), 404
+    session_ref.set({
+        "phase": 1,
+        "user_id": user_id,
+        "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+        "messages": [],
+        "forms_completed": [],
+        "created_at": firestore.SERVER_TIMESTAMP
+    })
+    session_state = session_ref.get().to_dict()
         
-        session_state = session_doc.to_dict()
         
     except Exception as e:
         return jsonify({"error": f"Failed to load session: {str(e)}"}), 500
