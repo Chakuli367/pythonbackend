@@ -16,7 +16,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 import json
 import re
-
+import httpx
+import threading
 
 # Third-party
 from dotenv import load_dotenv
@@ -752,162 +753,140 @@ def init_session():
             "details": str(e),
             "traceback": full_traceback
         }), 500
+
 @app.route("/submit-phase-data", methods=["POST"])
 def submit_phase_data():
-    """Process frontend form data with AI analysis and extraction"""
     data = request.json
     user_id = data.get("user_id")
     phase = data.get("phase")
     form_data = data.get("form_data")
     api_key = data.get("api_key")
-    
-    # 1. Input Validation
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
-    
     if not api_key:
         return jsonify({"error": "api_key required"}), 400
-    
     if not form_data:
         return jsonify({"error": "form_data required"}), 400
-    
-    # 2. Get session from Firebase
+
+    # ✅ SINGLE Firestore read (was 2 reads before)
     try:
         session_ref = db.collection("sessions").document(user_id)
         session_doc = session_ref.get()
-        
-        if not session_doc.exists:
-            session_ref.set({
+
+        if session_doc.exists:
+            session_state = session_doc.to_dict()
+        else:
+            session_state = {
                 "phase": 1,
                 "user_id": user_id,
                 "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
                 "messages": [],
                 "forms_completed": [],
-                "created_at": firestore.SERVER_TIMESTAMP
-            })
-        
-        session_state = session_ref.get().to_dict()
-        
+            }
+            # fire-and-forget, don't block
+            threading.Thread(
+                target=lambda: session_ref.set(session_state),
+                daemon=True
+            ).start()
+
     except Exception as e:
         return jsonify({"error": f"Failed to load session: {str(e)}"}), 500
-    
+
+    # ✅ Direct Groq API call — no LangChain overhead
     try:
-        # 3. Get the appropriate prompt and prepare data
         prompt_template_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
-        
-        # Prepare the dynamic data as JSON strings
         form_data_str = json.dumps(form_data, indent=2)
         prev_data_str = json.dumps(session_state.get("phase_data", {}), indent=2)
-        
-        # 4. Define the LLM Context Template
-        context_template = """
-{prompt_text}
 
-USER'S FORM SUBMISSION FOR PHASE {phase_num}:
+        system_content = f"""{prompt_template_text}
+
+USER'S FORM SUBMISSION FOR PHASE {phase}:
 {form_data_str}
 
 PREVIOUSLY COLLECTED DATA:
 {prev_data_str}
 
-Analyze the form data, extract the required information according to your phase instructions, and respond in the specified JSON format.
-"""
-        
-        # 5. Create the ChatPromptTemplate
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", context_template)
-        ])
-        
-        # 6. Invoke LLM
-        llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0.7,
-            groq_api_key=api_key
+Analyze the form data, extract the required information, and respond in the specified JSON format."""
+
+        # ✅ Direct httpx call — no LangChain wrapper
+        response = httpx.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "messages": [
+                    {"role": "system", "content": system_content}
+                ],
+            },
+            timeout=30.0,
         )
-        
-        llm_output = llm.invoke(prompt.format_messages(
-            prompt_text=prompt_template_text,
-            phase_num=phase,
-            form_data_str=form_data_str,
-            prev_data_str=prev_data_str
-        ))
-        
-        # 7. Parse and Process Response
-        parsed = extract_json_from_response(llm_output.content)
-        
-        if not parsed:
-            return jsonify({
-                "error": "Failed to parse AI response",
-                "raw_response": llm_output.content
-            }), 500
-        
-        # Extract and store data
-        extracted_data = parsed.get("extracted_data", {})
-        if extracted_data:
-            store_extracted(session_state, extracted_data)
-        
-        # Store the form completion
-        forms_completed = session_state.get("forms_completed", [])
-        if phase not in forms_completed:
-            forms_completed.append(phase)
-        
-        # Get response message
-        response_msg = parsed.get("message", "Data received.")
-        
-        # Check if ready to advance
-        ready_for_next = parsed.get("ready_for_next_phase", False)
-        
-        task_overview = None
-        
-        if ready_for_next and phase < 5:
-            next_phase = phase + 1
-            if next_phase == 5:
-                print(f"🔄 Generating 5-day plan preview for phase 5...")
-                task_overview = generate_5_day_plan(session_state)
-                print(f"✅ Plan preview generated with {len(task_overview.get('days', []))} days")
-        else:
-            next_phase = phase
-        
-        # 8. Update Firebase
+        response.raise_for_status()
+        llm_content = response.json()["choices"][0]["message"]["content"]
+
+    except httpx.TimeoutException:
+        return jsonify({"error": "AI request timed out. Please try again."}), 504
+    except Exception as e:
+        return jsonify({"error": f"AI call failed: {str(e)}"}), 500
+
+    # Parse response
+    parsed = extract_json_from_response(llm_content)
+    if not parsed:
+        return jsonify({
+            "error": "Failed to parse AI response",
+            "raw_response": llm_content
+        }), 500
+
+    # Extract data and determine next phase
+    extracted_data = parsed.get("extracted_data", {})
+    if extracted_data:
+        store_extracted(session_state, extracted_data)
+
+    forms_completed = session_state.get("forms_completed", [])
+    if phase not in forms_completed:
+        forms_completed.append(phase)
+
+    ready_for_next = parsed.get("ready_for_next_phase", False)
+    next_phase = phase + 1 if (ready_for_next and phase < 5) else phase
+
+    task_overview = None
+    if next_phase == 5 and ready_for_next:
+        task_overview = generate_5_day_plan(session_state)
+
+    # ✅ Firestore write happens in background — doesn't block response
+    def _save_to_firebase():
         try:
-            session_ref.update({
+            session_ref.set({
                 "phase": next_phase,
+                "user_id": user_id,
                 "phase_data": session_state["phase_data"],
                 "forms_completed": forms_completed,
-                "updated_at": firestore.SERVER_TIMESTAMP
-            })
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }, merge=True)
         except Exception as e:
-            return jsonify({
-                "error": "Failed to save progress to Firebase",
-                "details": str(e)
-            }), 500
-        
-        # 9. Success Response
-        response_data = {
-            "success": True,
-            "response": response_msg,
-            "phase": next_phase,
-            "phase_data": session_state["phase_data"],
-            "extracted_data": extracted_data,
-            "ready_for_next_phase": ready_for_next
-        }
-        
-        if next_phase == 5 and task_overview:
-            response_data["task_overview"] = task_overview
-            print(f"📤 Sending task_overview to frontend with {len(task_overview.get('days', []))} days")
-        
-        return jsonify(response_data)
-    
-    except Exception as e:
-        full_traceback = traceback.format_exc()
-        print("--- /submit-phase-data FULL TRACEBACK ---")
-        print(full_traceback)
-        print("------------------------------------------")
-        
-        return jsonify({
-            "error": "Backend processing failed: An unexpected error occurred.",
-            "details": str(e),
-            "traceback": full_traceback
-        }), 500
+            print(f"[BACKGROUND SAVE ERROR] {e}")
+
+    threading.Thread(target=_save_to_firebase, daemon=True).start()
+
+    # ✅ Return immediately
+    response_data = {
+        "success": True,
+        "response": parsed.get("message", "Data received."),
+        "phase": next_phase,
+        "phase_data": session_state["phase_data"],
+        "extracted_data": extracted_data,
+        "ready_for_next_phase": ready_for_next,
+    }
+
+    if task_overview:
+        response_data["task_overview"] = task_overview
+
+    return jsonify(response_data)
         
 
 @app.route("/chat", methods=["POST"])
