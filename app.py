@@ -1199,7 +1199,669 @@ def get_session_status():
         return jsonify({
             "error": f"Failed to get session: {str(e)}"
         }), 500
-        
+
+
+# ============================================================
+# TASK MANAGEMENT ENDPOINTS
+# Add these to your existing app.py
+# These operate on: users/{user_id}/datedcourses/life_skills
+# ============================================================
+
+from flask import Blueprint
+from datetime import datetime
+import uuid
+
+# ----------------------------------------------------------------
+# HELPER: Get the life_skills course ref for a user
+# ----------------------------------------------------------------
+def get_life_skills_ref(user_id):
+    return db.collection("users").document(user_id).collection("datedcourses").document("life_skills")
+
+
+# ================================================================
+# ENDPOINT 1: GET ALL TASKS
+# GET-style via POST — returns full task_overview for the user
+# ================================================================
+@app.route("/tasks/get", methods=["POST"])
+def get_tasks():
+    """
+    Fetch all tasks (and days) from the user's life_skills plan.
+
+    Body: { "user_id": "..." }
+
+    Returns:
+    {
+        "tasks": [...],   # flat task list
+        "days":  [...],   # day-by-day breakdown
+        "user_context": {...}
+    }
+    """
+    data = request.get_json()
+    user_id = data.get("user_id")
+
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    try:
+        doc = get_life_skills_ref(user_id).get()
+        if not doc.exists:
+            return jsonify({"error": "No plan found. Complete the onboarding first."}), 404
+
+        task_overview = doc.to_dict().get("task_overview", {})
+
+        return jsonify({
+            "success": True,
+            "tasks": task_overview.get("tasks", []),
+            "days": task_overview.get("days", []),
+            "user_context": task_overview.get("user_context", {})
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ================================================================
+# ENDPOINT 2: EDIT AN EXISTING TASK
+# Allows editing title, description, scheduled_time, location,
+# comfortLevel, estimatedTime, or marking done/undone.
+# ================================================================
+@app.route("/tasks/edit", methods=["POST"])
+def edit_task():
+    """
+    Edit any field of an existing task.
+
+    Body:
+    {
+        "user_id":      "...",
+        "task_id":      "day1_task",          # id field on the task
+        "updates": {
+            "title":          "New title",       # optional
+            "description":    "New desc",        # optional
+            "scheduled_time": "09:30",           # optional  HH:MM
+            "scheduled_date": "2025-04-20",      # optional  YYYY-MM-DD
+            "location":       "Starbucks",       # optional
+            "estimatedTime":  "20 minutes",      # optional
+            "comfortLevel":   "easy",            # optional: easy | moderate | challenging
+            "done":           true               # optional
+        }
+    }
+    """
+    data = request.get_json()
+    user_id  = data.get("user_id")
+    task_id  = data.get("task_id")
+    updates  = data.get("updates", {})
+
+    if not user_id or not task_id:
+        return jsonify({"error": "user_id and task_id are required"}), 400
+
+    if not updates:
+        return jsonify({"error": "No updates provided"}), 400
+
+    # Whitelist editable fields to prevent accidental overwrites
+    EDITABLE_FIELDS = {
+        "title", "description", "scheduled_time", "scheduled_date",
+        "location", "estimatedTime", "comfortLevel", "done"
+    }
+    invalid_fields = set(updates.keys()) - EDITABLE_FIELDS
+    if invalid_fields:
+        return jsonify({
+            "error": f"Fields not editable: {invalid_fields}. Allowed: {EDITABLE_FIELDS}"
+        }), 400
+
+    # Validate scheduled_time format if provided
+    if "scheduled_time" in updates:
+        try:
+            datetime.strptime(updates["scheduled_time"], "%H:%M")
+        except ValueError:
+            return jsonify({"error": "scheduled_time must be in HH:MM format (e.g. 09:30)"}), 400
+
+    # Validate scheduled_date format if provided
+    if "scheduled_date" in updates:
+        try:
+            datetime.strptime(updates["scheduled_date"], "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"error": "scheduled_date must be YYYY-MM-DD format"}), 400
+
+    # Validate comfortLevel if provided
+    if "comfortLevel" in updates and updates["comfortLevel"] not in {"easy", "moderate", "challenging"}:
+        return jsonify({"error": "comfortLevel must be: easy | moderate | challenging"}), 400
+
+    try:
+        ref = get_life_skills_ref(user_id)
+        doc = ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Plan not found"}), 404
+
+        doc_data     = doc.to_dict()
+        task_overview = doc_data.get("task_overview", {})
+        tasks        = task_overview.get("tasks", [])
+        days         = task_overview.get("days", [])
+
+        # ── Update in flat tasks list ──────────────────────────────
+        task_found = False
+        for task in tasks:
+            if task.get("id") == task_id:
+                task.update(updates)
+                task["last_edited"] = datetime.utcnow().isoformat()
+                task_found = True
+                break
+
+        if not task_found:
+            return jsonify({"error": f"Task '{task_id}' not found"}), 404
+
+        # ── Mirror done-status into days breakdown ─────────────────
+        if "done" in updates:
+            for day in days:
+                for day_task in day.get("tasks", []):
+                    if day_task.get("task_number") and task_id.startswith(f"day{day.get('day')}_"):
+                        day_task["done"] = updates["done"]
+
+        # ── Recalculate completion rate ────────────────────────────
+        total     = len(tasks)
+        completed = sum(1 for t in tasks if t.get("done"))
+        completion_rate = round((completed / total * 100), 1) if total > 0 else 0.0
+
+        task_overview["tasks"] = tasks
+        task_overview["days"]  = days
+
+        ref.update({
+            "task_overview":   task_overview,
+            "completion_rate": completion_rate,
+            "last_updated":    datetime.utcnow().isoformat()
+        })
+
+        return jsonify({
+            "success":         True,
+            "updated_task":    next(t for t in tasks if t["id"] == task_id),
+            "completion_rate": completion_rate,
+            "message":         f"Task '{task_id}' updated successfully"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ================================================================
+# ENDPOINT 3: ADD A NEW TASK
+# Adds a custom task to a specific day (1-5).
+# ================================================================
+@app.route("/tasks/add", methods=["POST"])
+def add_task():
+    """
+    Add a brand-new custom task to the plan.
+
+    Body:
+    {
+        "user_id":        "...",
+        "day":            2,                        # which day (1-5)
+        "title":          "Practice at the mall",
+        "description":    "Go to the food court and ask someone a question",
+        "scheduled_time": "14:00",                  # HH:MM — optional
+        "scheduled_date": "2025-04-21",             # YYYY-MM-DD — optional
+        "location":       "Mall food court",        # optional
+        "estimatedTime":  "30 minutes",             # optional
+        "comfortLevel":   "moderate",               # easy | moderate | challenging
+        "xp":             30                        # optional, defaults to 30
+    }
+    """
+    data = request.get_json()
+    user_id  = data.get("user_id")
+    day      = data.get("day")
+    title    = data.get("title", "").strip()
+    desc     = data.get("description", "").strip()
+
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+    if not day or not isinstance(day, int) or day < 1 or day > 5:
+        return jsonify({"error": "day must be an integer between 1 and 5"}), 400
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+
+    # Validate optional time/date fields
+    scheduled_time = data.get("scheduled_time", "")
+    scheduled_date = data.get("scheduled_date", "")
+
+    if scheduled_time:
+        try:
+            datetime.strptime(scheduled_time, "%H:%M")
+        except ValueError:
+            return jsonify({"error": "scheduled_time must be HH:MM"}), 400
+
+    if scheduled_date:
+        try:
+            datetime.strptime(scheduled_date, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"error": "scheduled_date must be YYYY-MM-DD"}), 400
+
+    comfort = data.get("comfortLevel", "moderate")
+    if comfort not in {"easy", "moderate", "challenging"}:
+        return jsonify({"error": "comfortLevel must be: easy | moderate | challenging"}), 400
+
+    try:
+        ref = get_life_skills_ref(user_id)
+        doc = ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Plan not found. Complete onboarding first."}), 404
+
+        doc_data      = doc.to_dict()
+        task_overview = doc_data.get("task_overview", {})
+        tasks         = task_overview.get("tasks", [])
+        days          = task_overview.get("days", [])
+
+        # ── Build new task object ──────────────────────────────────
+        task_id = f"day{day}_custom_{uuid.uuid4().hex[:8]}"
+
+        new_task = {
+            "id":             task_id,
+            "title":          title,
+            "description":    desc,
+            "done":           False,
+            "xp":             data.get("xp", 30),
+            "scheduled_time": scheduled_time,
+            "scheduled_date": scheduled_date,
+            "location":       data.get("location", ""),
+            "estimatedTime":  data.get("estimatedTime", ""),
+            "comfortLevel":   comfort,
+            "type":           "custom_task",
+            "difficulty":     day,
+            "skill_focus":    task_overview.get("user_context", {}).get("skill_gaps", ""),
+            "contextAnchor":  task_overview.get("user_context", {}).get("problem", ""),
+            "is_custom":      True,
+            "created_at":     datetime.utcnow().isoformat()
+        }
+
+        tasks.append(new_task)
+
+        # ── Inject into the correct day breakdown ──────────────────
+        day_found = False
+        for d in days:
+            if d.get("day") == day:
+                d["tasks"].append({
+                    "task_number": len(d["tasks"]) + 1,
+                    "description": desc,
+                    "done":        False,
+                    "task_id":     task_id
+                })
+                day_found = True
+                break
+
+        # If somehow the day doesn't exist yet, create it
+        if not day_found:
+            days.append({
+                "day":   day,
+                "title": f"Day {day}: Custom",
+                "tasks": [{
+                    "task_number": 1,
+                    "description": desc,
+                    "done":        False,
+                    "task_id":     task_id
+                }],
+                "completed": False
+            })
+            days.sort(key=lambda d: d["day"])
+
+        task_overview["tasks"] = tasks
+        task_overview["days"]  = days
+
+        ref.update({
+            "task_overview": task_overview,
+            "last_updated":  datetime.utcnow().isoformat()
+        })
+
+        return jsonify({
+            "success":  True,
+            "task_id":  task_id,
+            "new_task": new_task,
+            "message":  f"Task added to Day {day} successfully"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ================================================================
+# ENDPOINT 4: DELETE A TASK
+# ================================================================
+@app.route("/tasks/delete", methods=["POST"])
+def delete_task():
+    """
+    Delete a task from the plan.
+    Note: only custom tasks (is_custom: true) can be deleted.
+    Pass force: true to delete AI-generated tasks too.
+
+    Body:
+    {
+        "user_id": "...",
+        "task_id": "day2_custom_abc12345",
+        "force":   false     # set true to delete AI-generated tasks
+    }
+    """
+    data = request.get_json()
+    user_id = data.get("user_id")
+    task_id = data.get("task_id")
+    force   = data.get("force", False)
+
+    if not user_id or not task_id:
+        return jsonify({"error": "user_id and task_id are required"}), 400
+
+    try:
+        ref = get_life_skills_ref(user_id)
+        doc = ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Plan not found"}), 404
+
+        doc_data      = doc.to_dict()
+        task_overview = doc_data.get("task_overview", {})
+        tasks         = task_overview.get("tasks", [])
+        days          = task_overview.get("days", [])
+
+        # Find the task first
+        target = next((t for t in tasks if t.get("id") == task_id), None)
+        if not target:
+            return jsonify({"error": f"Task '{task_id}' not found"}), 404
+
+        # Guard: prevent accidental deletion of AI-generated tasks
+        if not target.get("is_custom") and not force:
+            return jsonify({
+                "error": "This is an AI-generated task. Pass force: true to delete it.",
+                "task":  target
+            }), 403
+
+        # Remove from flat list
+        tasks = [t for t in tasks if t.get("id") != task_id]
+
+        # Remove from days breakdown
+        for day in days:
+            day["tasks"] = [
+                dt for dt in day.get("tasks", [])
+                if dt.get("task_id") != task_id
+            ]
+            # Re-number remaining tasks
+            for idx, dt in enumerate(day["tasks"]):
+                dt["task_number"] = idx + 1
+
+        # Recalculate completion rate
+        total     = len(tasks)
+        completed = sum(1 for t in tasks if t.get("done"))
+        completion_rate = round((completed / total * 100), 1) if total > 0 else 0.0
+
+        task_overview["tasks"] = tasks
+        task_overview["days"]  = days
+
+        ref.update({
+            "task_overview":   task_overview,
+            "completion_rate": completion_rate,
+            "last_updated":    datetime.utcnow().isoformat()
+        })
+
+        return jsonify({
+            "success":         True,
+            "deleted_task_id": task_id,
+            "completion_rate": completion_rate,
+            "message":         f"Task '{task_id}' deleted successfully"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ================================================================
+# ENDPOINT 5: ASSIGN / UPDATE TIME FOR A TASK
+# Convenience shortcut — just for updating schedule fields.
+# ================================================================
+@app.route("/tasks/schedule", methods=["POST"])
+def schedule_task():
+    """
+    Assign or update the time (and optionally date) for a task.
+
+    Body:
+    {
+        "user_id":        "...",
+        "task_id":        "day1_task",
+        "scheduled_time": "08:00",        # required  HH:MM
+        "scheduled_date": "2025-04-18"    # optional  YYYY-MM-DD
+    }
+    """
+    data           = request.get_json()
+    user_id        = data.get("user_id")
+    task_id        = data.get("task_id")
+    scheduled_time = data.get("scheduled_time", "").strip()
+    scheduled_date = data.get("scheduled_date", "").strip()
+
+    if not user_id or not task_id or not scheduled_time:
+        return jsonify({"error": "user_id, task_id, and scheduled_time are required"}), 400
+
+    try:
+        datetime.strptime(scheduled_time, "%H:%M")
+    except ValueError:
+        return jsonify({"error": "scheduled_time must be HH:MM (e.g. 09:30)"}), 400
+
+    if scheduled_date:
+        try:
+            datetime.strptime(scheduled_date, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"error": "scheduled_date must be YYYY-MM-DD"}), 400
+
+    try:
+        ref = get_life_skills_ref(user_id)
+        doc = ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Plan not found"}), 404
+
+        doc_data      = doc.to_dict()
+        task_overview = doc_data.get("task_overview", {})
+        tasks         = task_overview.get("tasks", [])
+
+        task_found = False
+        updated_task = None
+        for task in tasks:
+            if task.get("id") == task_id:
+                task["scheduled_time"] = scheduled_time
+                if scheduled_date:
+                    task["scheduled_date"] = scheduled_date
+                task["last_edited"] = datetime.utcnow().isoformat()
+                task_found   = True
+                updated_task = task
+                break
+
+        if not task_found:
+            return jsonify({"error": f"Task '{task_id}' not found"}), 404
+
+        task_overview["tasks"] = tasks
+
+        ref.update({
+            "task_overview": task_overview,
+            "last_updated":  datetime.utcnow().isoformat()
+        })
+
+        return jsonify({
+            "success":      True,
+            "updated_task": updated_task,
+            "message":      f"Task '{task_id}' scheduled for {scheduled_time}" +
+                            (f" on {scheduled_date}" if scheduled_date else "")
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ================================================================
+# ENDPOINT 6: BULK SCHEDULE — set times for multiple tasks at once
+# ================================================================
+@app.route("/tasks/bulk-schedule", methods=["POST"])
+def bulk_schedule_tasks():
+    """
+    Assign scheduled times to multiple tasks in one call.
+
+    Body:
+    {
+        "user_id": "...",
+        "schedules": [
+            { "task_id": "day1_task", "scheduled_time": "08:00", "scheduled_date": "2025-04-18" },
+            { "task_id": "day2_task", "scheduled_time": "09:30" },
+            { "task_id": "day3_task", "scheduled_time": "18:00", "scheduled_date": "2025-04-20" }
+        ]
+    }
+    """
+    data      = request.get_json()
+    user_id   = data.get("user_id")
+    schedules = data.get("schedules", [])
+
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+    if not schedules or not isinstance(schedules, list):
+        return jsonify({"error": "schedules must be a non-empty list"}), 400
+
+    # Validate all entries before touching Firestore
+    for entry in schedules:
+        if not entry.get("task_id") or not entry.get("scheduled_time"):
+            return jsonify({"error": "Each schedule entry needs task_id and scheduled_time"}), 400
+        try:
+            datetime.strptime(entry["scheduled_time"], "%H:%M")
+        except ValueError:
+            return jsonify({
+                "error": f"Invalid scheduled_time '{entry['scheduled_time']}' for task '{entry['task_id']}'. Use HH:MM."
+            }), 400
+        if entry.get("scheduled_date"):
+            try:
+                datetime.strptime(entry["scheduled_date"], "%Y-%m-%d")
+            except ValueError:
+                return jsonify({
+                    "error": f"Invalid scheduled_date for task '{entry['task_id']}'. Use YYYY-MM-DD."
+                }), 400
+
+    try:
+        ref = get_life_skills_ref(user_id)
+        doc = ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Plan not found"}), 404
+
+        doc_data      = doc.to_dict()
+        task_overview = doc_data.get("task_overview", {})
+        tasks         = task_overview.get("tasks", [])
+
+        # Build a quick lookup
+        task_map = {t["id"]: t for t in tasks}
+
+        results   = []
+        not_found = []
+
+        for entry in schedules:
+            tid = entry["task_id"]
+            if tid not in task_map:
+                not_found.append(tid)
+                continue
+
+            task_map[tid]["scheduled_time"] = entry["scheduled_time"]
+            if entry.get("scheduled_date"):
+                task_map[tid]["scheduled_date"] = entry["scheduled_date"]
+            task_map[tid]["last_edited"] = datetime.utcnow().isoformat()
+            results.append(tid)
+
+        # Write updated tasks back
+        task_overview["tasks"] = list(task_map.values())
+
+        ref.update({
+            "task_overview": task_overview,
+            "last_updated":  datetime.utcnow().isoformat()
+        })
+
+        return jsonify({
+            "success":          True,
+            "scheduled_tasks":  results,
+            "not_found_tasks":  not_found,
+            "message":          f"{len(results)} task(s) scheduled. {len(not_found)} not found."
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ================================================================
+# ENDPOINT 7: REORDER TASKS WITHIN A DAY
+# ================================================================
+@app.route("/tasks/reorder", methods=["POST"])
+def reorder_tasks():
+    """
+    Reorder tasks for a specific day.
+
+    Body:
+    {
+        "user_id":       "...",
+        "day":           2,
+        "ordered_ids":   ["day2_task", "day2_custom_abc12345"]   # desired order
+    }
+    """
+    data        = request.get_json()
+    user_id     = data.get("user_id")
+    day         = data.get("day")
+    ordered_ids = data.get("ordered_ids", [])
+
+    if not user_id or not day or not ordered_ids:
+        return jsonify({"error": "user_id, day, and ordered_ids are required"}), 400
+
+    try:
+        ref = get_life_skills_ref(user_id)
+        doc = ref.get()
+
+        if not doc.exists:
+            return jsonify({"error": "Plan not found"}), 404
+
+        doc_data      = doc.to_dict()
+        task_overview = doc_data.get("task_overview", {})
+        tasks         = task_overview.get("tasks", [])
+        days          = task_overview.get("days", [])
+
+        # Build map for quick access
+        task_map = {t["id"]: t for t in tasks}
+
+        # Reorder within the day object
+        day_obj = next((d for d in days if d.get("day") == day), None)
+        if not day_obj:
+            return jsonify({"error": f"Day {day} not found in plan"}), 404
+
+        # Validate all IDs exist
+        missing = [oid for oid in ordered_ids if oid not in task_map]
+        if missing:
+            return jsonify({"error": f"Task IDs not found: {missing}"}), 404
+
+        # Reorder the day's task list
+        existing_day_tasks = {dt.get("task_id"): dt for dt in day_obj.get("tasks", [])}
+        reordered_day_tasks = []
+        for idx, oid in enumerate(ordered_ids):
+            dt = existing_day_tasks.get(oid, {
+                "task_id":     oid,
+                "description": task_map[oid].get("description", ""),
+                "done":        task_map[oid].get("done", False)
+            })
+            dt["task_number"] = idx + 1
+            reordered_day_tasks.append(dt)
+
+        day_obj["tasks"] = reordered_day_tasks
+
+        task_overview["days"] = days
+
+        ref.update({
+            "task_overview": task_overview,
+            "last_updated":  datetime.utcnow().isoformat()
+        })
+
+        return jsonify({
+            "success":        True,
+            "day":            day,
+            "new_task_order": ordered_ids,
+            "message":        f"Day {day} tasks reordered successfully"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/update-task", methods=["POST"])
 def update_task():
     """Mark a task as complete and update progress"""
