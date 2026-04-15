@@ -852,22 +852,46 @@ Analyze the form data, extract the required information, and respond in the spec
         forms_completed.append(phase)
 
     ready_for_next = parsed.get("ready_for_next_phase", False)
-    next_phase = phase + 1 if (ready_for_next and phase < 5) else phase
-
     task_overview = None
-    if next_phase == 5 and ready_for_next:
-        task_overview = generate_5_day_plan(session_state)
+
+    if ready_for_next:
+        if phase == 4:
+            task_overview = generate_5_day_plan(session_state)
+            next_phase = 6
+        else:
+            next_phase = phase + 1
+    else:
+        next_phase = phase
 
     # ✅ Firestore write happens in background — doesn't block response
     def _save_to_firebase():
         try:
-            session_ref.set({
+            update_data = {
                 "phase": next_phase,
                 "user_id": user_id,
                 "phase_data": session_state["phase_data"],
                 "forms_completed": forms_completed,
                 "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+
+        if task_overview:
+            update_data["plan_generated"] = True
+            update_data["task_overview"] = task_overview
+
+            course_ref = db.collection("users").document(user_id)\
+                .collection("datedcourses").document("life_skills")
+
+            course_ref.set({
+                "user_id": user_id,
+                "created_at": datetime.utcnow().isoformat(),
+                "phase_data": session_state["phase_data"],
+                "task_overview": task_overview,
+                "status": "active",
+                "completion_rate": 0
             }, merge=True)
+
+        session_ref.set(update_data, merge=True)
+        
         except Exception as e:
             print(f"[BACKGROUND SAVE ERROR] {e}")
 
@@ -885,6 +909,7 @@ Analyze the form data, extract the required information, and respond in the spec
 
     if task_overview:
         response_data["task_overview"] = task_overview
+        response_data["phase"] = 6
 
     return jsonify(response_data)
         
