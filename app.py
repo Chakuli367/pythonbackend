@@ -874,23 +874,23 @@ Analyze the form data, extract the required information, and respond in the spec
                 "updated_at": firestore.SERVER_TIMESTAMP,
             }
 
-        if task_overview:
-            update_data["plan_generated"] = True
-            update_data["task_overview"] = task_overview
+            if task_overview:
+                update_data["plan_generated"] = True
+                update_data["task_overview"] = task_overview
 
-            course_ref = db.collection("users").document(user_id)\
-                .collection("datedcourses").document("life_skills")
+                course_ref = db.collection("users").document(user_id)\
+                    .collection("datedcourses").document("life_skills")
 
-            course_ref.set({
-                "user_id": user_id,
-                "created_at": datetime.utcnow().isoformat(),
-                "phase_data": session_state["phase_data"],
-                "task_overview": task_overview,
-                "status": "active",
-                "completion_rate": 0
-            }, merge=True)
+                course_ref.set({
+                    "user_id": user_id,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "phase_data": session_state["phase_data"],
+                    "task_overview": task_overview,
+                    "status": "active",
+                    "completion_rate": 0
+                }, merge=True)
 
-        session_ref.set(update_data, merge=True)
+            session_ref.set(update_data, merge=True)
         
         except Exception as e:
             print(f"[BACKGROUND SAVE ERROR] {e}")
