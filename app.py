@@ -362,12 +362,9 @@ def therapy_session():
             return jsonify({"error": "user_id and message required"}), 400
 
         # API key from Authorization header
-        api_key = None
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            api_key = auth_header[len("Bearer "):].strip()
+        api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            return jsonify({"error": "Missing API key in Authorization header"}), 401
+            return jsonify({"error": "Server API key not configured"}), 500
 
         client.api_key = api_key
 
@@ -548,12 +545,9 @@ def session_to_plan():
         if not user_id or not session_id:
             return jsonify({"error": "user_id and session_id required"}), 400
 
-        api_key = None
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            api_key = auth_header[len("Bearer "):].strip()
+        api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            return jsonify({"error": "Missing API key"}), 401
+            return jsonify({"error": "Server API key not configured"}), 500
 
         client.api_key = api_key
 
