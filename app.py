@@ -335,7 +335,358 @@ def parse_story_analysis(analysis_text):
 
 
 
+# ============================================================
+# THERAPY SESSION ENDPOINTS
+# Two endpoints:
+#   1. /therapy-session  — stateful CBT mini-session (4 phases)
+#   2. /session-to-plan  — converts completed session into task
+# ============================================================
 
+import uuid
+from datetime import datetime
+
+# ── ENDPOINT 1: /therapy-session ────────────────────────────
+@app.route('/therapy-session', methods=['POST', 'OPTIONS'])
+def therapy_session():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        data = request.get_json()
+        user_id        = data.get("user_id")
+        user_message   = data.get("message", "").strip()
+        session_id     = data.get("session_id")       # None on first turn
+        start_new      = data.get("start_new", False) # True to force new session
+
+        if not user_id or not user_message:
+            return jsonify({"error": "user_id and message required"}), 400
+
+        # API key from Authorization header
+        api_key = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            api_key = auth_header[len("Bearer "):].strip()
+        if not api_key:
+            return jsonify({"error": "Missing API key in Authorization header"}), 401
+
+        client.api_key = api_key
+
+        # ── Load or create session ───────────────────────────
+        if not session_id or start_new:
+            session_id = f"therapy_{user_id}_{int(datetime.now().timestamp())}"
+            session_data = {
+                "session_id":       session_id,
+                "user_id":          user_id,
+                "messages":         [],
+                "phase":            1,
+                "extracted":        {
+                    "situation":        "",
+                    "anxious_thought":  "",
+                    "emotion":          "",
+                    "reframe":          "",
+                    "proposed_task":    {
+                        "name":         "",
+                        "type":         "",
+                        "why":          "",
+                        "anxiety_pre":  5,
+                        "action_steps": []
+                    }
+                },
+                "session_complete": False,
+                "created_at":       datetime.utcnow().isoformat()
+            }
+            # Save new session
+            db.collection("users").document(user_id)\
+              .collection("therapy_sessions").document(session_id)\
+              .set(session_data)
+        else:
+            # Load existing session
+            doc = db.collection("users").document(user_id)\
+                    .collection("therapy_sessions").document(session_id).get()
+            if not doc.exists:
+                return jsonify({"error": "Session not found. Pass start_new: true to begin."}), 404
+            session_data = doc.to_dict()
+
+        # ── Guard: already complete ──────────────────────────
+        if session_data.get("session_complete"):
+            return jsonify({
+                "session_id":       session_id,
+                "reply":            "This session is complete. Call /session-to-plan to convert it into your task.",
+                "phase":            5,
+                "session_complete": True,
+                "extracted":        session_data.get("extracted", {})
+            })
+
+        # ── Build message history ────────────────────────────
+        messages = session_data.get("messages", [])
+
+        # On turn 1: inject system prompt
+        if len(messages) == 0:
+            system_prompt = load_prompt("prompt_therapy_session.txt")
+            if not system_prompt:
+                return jsonify({"error": "prompt_therapy_session.txt not found"}), 500
+
+            # Inject any prior context we have about this user
+            try:
+                user_doc = db.collection("users").document(user_id).get()
+                user_profile = user_doc.to_dict() if user_doc.exists else {}
+                prior_context = f"""
+USER PROFILE (use this to personalise — do not mention it explicitly):
+- Past activities: {user_profile.get('completed_activities_count', 0)} completed
+- Typical anxiety level: {user_profile.get('baseline_anxiety', 'unknown')}
+- Goal type: {user_profile.get('goal', 'general')}
+"""
+            except Exception:
+                prior_context = ""
+
+            messages = [{"role": "system", "content": system_prompt + prior_context}]
+
+        # Append user turn
+        messages.append({"role": "user", "content": user_message})
+
+        # ── Build phase context injected as system reminder ──
+        current_phase = session_data.get("phase", 1)
+        extracted_so_far = session_data.get("extracted", {})
+        phase_reminder = {
+            "role": "system",
+            "content": f"""
+CURRENT PHASE: {current_phase}
+EXTRACTED SO FAR: {json.dumps(extracted_so_far, indent=2)}
+INSTRUCTION: Respond with valid JSON only. Follow the phase rules in your system prompt.
+Session must not exceed 4 phases. Phase 4 ends the session.
+"""
+        }
+
+        messages_for_model = [messages[0], phase_reminder] + messages[1:]
+
+        # ── Call Groq ────────────────────────────────────────
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages_for_model,
+            temperature=0.65,
+            max_tokens=700
+        )
+        raw_reply = response.choices[0].message.content.strip()
+
+        # ── Parse JSON from LLM response ─────────────────────
+        parsed = parse_json_response(raw_reply)
+        if not parsed:
+            # Fallback: return raw text, don't break session
+            messages.append({"role": "assistant", "content": raw_reply})
+            db.collection("users").document(user_id)\
+              .collection("therapy_sessions").document(session_id)\
+              .update({"messages": messages})
+            return jsonify({
+                "session_id": session_id,
+                "reply":      raw_reply,
+                "phase":      current_phase,
+                "session_complete": False
+            })
+
+        ai_reply       = parsed.get("message", raw_reply)
+        next_phase     = parsed.get("phase", current_phase)
+        session_complete = parsed.get("session_complete", False)
+        new_extracted  = parsed.get("extracted", {})
+
+        # ── Merge extracted data (never overwrite with empty) ─
+        merged_extracted = session_data.get("extracted", {})
+        for key, val in new_extracted.items():
+            if isinstance(val, dict):
+                if key not in merged_extracted:
+                    merged_extracted[key] = {}
+                for subkey, subval in val.items():
+                    if subval and subval != "" and subval != 0:
+                        merged_extracted[key][subkey] = subval
+            else:
+                if val and val != "" and val != 0:
+                    merged_extracted[key] = val
+
+        # ── Append assistant turn to history ─────────────────
+        messages.append({"role": "assistant", "content": ai_reply})
+
+        # ── Save updated session to Firestore ─────────────────
+        update_payload = {
+            "messages":         messages,
+            "phase":            next_phase,
+            "extracted":        merged_extracted,
+            "session_complete": session_complete,
+            "updated_at":       datetime.utcnow().isoformat()
+        }
+        if session_complete:
+            update_payload["completed_at"] = datetime.utcnow().isoformat()
+
+        db.collection("users").document(user_id)\
+          .collection("therapy_sessions").document(session_id)\
+          .update(update_payload)
+
+        return jsonify({
+            "session_id":       session_id,
+            "reply":            ai_reply,
+            "phase":            next_phase,
+            "session_complete": session_complete,
+            "extracted":        merged_extracted,
+            "turn_count":       len([m for m in messages if m["role"] == "user"])
+        })
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+# ── ENDPOINT 2: /session-to-plan ────────────────────────────
+@app.route('/session-to-plan', methods=['POST', 'OPTIONS'])
+def session_to_plan():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        data       = request.get_json()
+        user_id    = data.get("user_id")
+        session_id = data.get("session_id")
+
+        if not user_id or not session_id:
+            return jsonify({"error": "user_id and session_id required"}), 400
+
+        api_key = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            api_key = auth_header[len("Bearer "):].strip()
+        if not api_key:
+            return jsonify({"error": "Missing API key"}), 401
+
+        client.api_key = api_key
+
+        # ── Load the completed session ───────────────────────
+        doc = db.collection("users").document(user_id)\
+                .collection("therapy_sessions").document(session_id).get()
+        if not doc.exists:
+            return jsonify({"error": "Session not found"}), 404
+
+        session_data = doc.to_dict()
+
+        if not session_data.get("session_complete"):
+            return jsonify({
+                "error": "Session is not complete yet. Finish the therapy session first.",
+                "current_phase": session_data.get("phase", 1)
+            }), 400
+
+        extracted = session_data.get("extracted", {})
+        if not extracted.get("proposed_task", {}).get("name"):
+            return jsonify({"error": "No task was extracted from this session"}), 400
+
+        # ── Load prompt ──────────────────────────────────────
+        prompt_template = load_prompt("prompt_session_to_plan.txt")
+        if not prompt_template:
+            return jsonify({"error": "prompt_session_to_plan.txt not found"}), 500
+
+        # Build the prompt with session data injected
+        session_summary = f"""
+SITUATION: {extracted.get('situation', '')}
+ANXIOUS THOUGHT: {extracted.get('anxious_thought', '')}
+EMOTION: {extracted.get('emotion', '')}
+CBT REFRAME: {extracted.get('reframe', '')}
+PROPOSED TASK: {json.dumps(extracted.get('proposed_task', {}), indent=2)}
+"""
+        full_prompt = prompt_template.replace("<<session_summary>>", session_summary)
+
+        # ── Call Groq ────────────────────────────────────────
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0.3,   # Low temp — we want precise structured output
+            max_tokens=600
+        )
+        raw = response.choices[0].message.content.strip()
+
+        # ── Parse the plan JSON ──────────────────────────────
+        plan = parse_json_response(raw)
+        if not plan:
+            return jsonify({"error": "Failed to parse plan from LLM", "raw": raw}), 500
+
+        # ── Stamp with metadata ──────────────────────────────
+        plan["session_id"]    = session_id
+        plan["created_at"]    = int(datetime.now().timestamp() * 1000)
+        plan["completed"]     = False
+        plan["source"]        = "therapy_session"
+
+        # Ensure scheduledDate is a timestamp ms integer
+        if "scheduledDate" not in plan or not plan["scheduledDate"]:
+            # Default: 24h from now
+            plan["scheduledDate"] = int((datetime.now().timestamp() + 86400) * 1000)
+
+        # ── Save plan to activities (same collection as app) ──
+        activity_ref = db.collection("users").document(user_id)\
+                         .collection("activities").document()
+        activity_ref.set(plan)
+        plan["id"] = activity_ref.id
+
+        # ── Also update the session doc with plan reference ───
+        db.collection("users").document(user_id)\
+          .collection("therapy_sessions").document(session_id)\
+          .update({
+              "plan_id":         activity_ref.id,
+              "plan_created_at": datetime.utcnow().isoformat()
+          })
+
+        # ── Return both session summary and the plan ──────────
+        return jsonify({
+            "success":      True,
+            "plan":         plan,
+            "activity_id":  activity_ref.id,
+            "session_summary": {
+                "situation":       extracted.get("situation", ""),
+                "anxious_thought": extracted.get("anxious_thought", ""),
+                "reframe":         extracted.get("reframe", ""),
+                "task_name":       extracted.get("proposed_task", {}).get("name", "")
+            },
+            "message": "Plan saved to your activities."
+        })
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+# ── ENDPOINT 3: /therapy-session/history ─────────────────────
+# Fetch all past sessions for a user (for the history view)
+@app.route('/therapy-session/history', methods=['POST', 'OPTIONS'])
+def therapy_session_history():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data    = request.get_json()
+    user_id = data.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    try:
+        sessions_ref = db.collection("users").document(user_id)\
+                         .collection("therapy_sessions")\
+                         .order_by("created_at", direction=firestore.Query.DESCENDING)\
+                         .limit(20)
+        docs = sessions_ref.stream()
+
+        sessions = []
+        for doc in docs:
+            d = doc.to_dict()
+            sessions.append({
+                "session_id":       doc.id,
+                "created_at":       d.get("created_at"),
+                "session_complete": d.get("session_complete", False),
+                "phase":            d.get("phase", 1),
+                "plan_id":          d.get("plan_id"),
+                "situation":        d.get("extracted", {}).get("situation", ""),
+                "task_name":        d.get("extracted", {}).get("proposed_task", {}).get("name", ""),
+                "turn_count":       len([m for m in d.get("messages", []) if m.get("role") == "user"])
+            })
+
+        return jsonify({"success": True, "sessions": sessions})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+        
  
 # ================== PHASE CONFIG ==================
 PHASE_REQUIREMENTS = {
