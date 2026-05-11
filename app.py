@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 from flask import Response, stream_with_context
 import httpx
 from firebase_admin import firestore
+import traceback
+import io
 
 # Third-party
 from dotenv import load_dotenv
@@ -345,6 +347,55 @@ def parse_story_analysis(analysis_text):
 import uuid
 from datetime import datetime
 
+# ── ENDPOINT 0: /transcribe ─────────────────────────────────
+@app.route('/transcribe', methods=['POST', 'OPTIONS'])
+def transcribe():
+    if request.method == 'OPTIONS':
+        return '', 204
+    try:
+        if 'audio' not in request.files:
+            return jsonify({"error": "No audio file provided"}), 400
+        audio_bytes = request.files['audio'].read()
+        result = client.audio.transcriptions.create(
+            model="whisper-large-v3-turbo",
+            file=("audio.webm", io.BytesIO(audio_bytes), "audio/webm"),
+        )
+        return jsonify({"success": True, "transcript": result.text.strip()})
+    except Exception as e:
+        import traceback; print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+# ── ENDPOINT 0b: /speak ─────────────────────────────────────
+@app.route('/speak', methods=['POST', 'OPTIONS'])
+def speak():
+    if request.method == 'OPTIONS':
+        return '', 204
+    try:
+        data = request.get_json()
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"error": "No text provided"}), 400
+        response = client.audio.speech.create(
+            model="playai-tts",
+            voice="Fritz-PlayAI",
+            input=text,
+            response_format="mp3",
+        )
+        audio_bytes = response.read()
+        return Response(
+            audio_bytes,
+            mimetype="audio/mpeg",
+            headers={
+                "Content-Type": "audio/mpeg",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+    except Exception as e:
+        import traceback; print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+
 # ── ENDPOINT 1: /therapy-session ────────────────────────────
 @app.route('/therapy-session', methods=['POST', 'OPTIONS'])
 def therapy_session():
@@ -529,6 +580,8 @@ Session must not exceed 4 phases. Phase 4 ends the session.
         import traceback
         print(traceback.format_exc())
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
 
 
 # ── ENDPOINT 2: /session-to-plan ────────────────────────────
