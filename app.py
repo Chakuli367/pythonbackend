@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})  # CORS for all originsg
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
 # Load Firebase config from environment variable
 firebase_config_json = os.environ.get("FIREBASE_CONFIG")
@@ -367,7 +367,11 @@ from datetime import datetime
 @app.route('/transcribe', methods=['POST', 'OPTIONS'])
 def transcribe():
     if request.method == 'OPTIONS':
-        return '', 204
+        response = app.make_default_options_response()
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response, 200
     try:
         if 'audio' not in request.files:
             return jsonify({"error": "No audio file provided"}), 400
