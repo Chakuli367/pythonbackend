@@ -24,6 +24,8 @@ import httpx
 from firebase_admin import firestore
 import traceback
 import io
+import itertools
+import requests as http_requests
 
 # Third-party
 from dotenv import load_dotenv
@@ -79,6 +81,20 @@ client = OpenAI(
     api_key=os.environ.get("GROQ_API_KEY"),
     base_url="https://api.groq.com/openai/v1"
 )
+
+
+# ── ElevenLabs Key Rotation Setup ───────────────────────────
+ELEVENLABS_API_KEYS = [v for k, v in os.environ.items() if k.startswith("ELEVENLABS_API_KEY") and v]
+if not ELEVENLABS_API_KEYS:
+    print("⚠️ Warning: No ElevenLabs API keys configured")
+
+_key_cycle = itertools.cycle(ELEVENLABS_API_KEYS) if ELEVENLABS_API_KEYS else None
+_key_lock = threading.Lock()
+ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # Rachel — calm, warm
+
+def get_next_elevenlabs_key():
+    with _key_lock:
+        return next(_key_cycle)
 
 LOGS_FILE = "logs.json"
 REWARD_FILE = "user_rewards.json"
@@ -366,6 +382,7 @@ def transcribe():
         return jsonify({"error": str(e)}), 500
 
 # ── ENDPOINT 0b: /speak ─────────────────────────────────────
+# ── ENDPOINT 0b: /speak (ElevenLabs with key rotation) ──────
 @app.route('/speak', methods=['POST', 'OPTIONS'])
 def speak():
     if request.method == 'OPTIONS':
@@ -375,25 +392,76 @@ def speak():
         text = data.get("text", "").strip()
         if not text:
             return jsonify({"error": "No text provided"}), 400
-        response = client.audio.speech.create(
-            model="playai-tts",
-            voice="Fritz-PlayAI",
-            input=text,
-            response_format="mp3",
-        )
-        audio_bytes = response.read()
-        return Response(
-            audio_bytes,
-            mimetype="audio/mpeg",
-            headers={
-                "Content-Type": "audio/mpeg",
-                "Access-Control-Allow-Origin": "*",
-            }
-        )
+
+        if not ELEVENLABS_API_KEYS:
+            return jsonify({"error": "No ElevenLabs API keys configured"}), 500
+
+        # Clean markdown/formatting so TTS doesn't sound robotic
+        def clean_text_for_tts(t: str) -> str:
+            t = re.sub(r'\*\*?(.*?)\*\*?', r'\1', t)
+            t = re.sub(r'^\s*[-•*]\s+', '', t, flags=re.MULTILINE)
+            t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.MULTILINE)
+            t = re.sub(r'^#+\s+', '', t, flags=re.MULTILINE)
+            t = re.sub(r'\[.*?\]|\(.*?\)', '', t)
+            t = re.sub(r'\n{2,}', '. ', t)
+            t = re.sub(r'\n', ' ', t)
+            t = re.sub(r'\s{2,}', ' ', t).strip()
+            return t
+
+        cleaned_text = clean_text_for_tts(text)
+        last_error = None
+
+        for _ in range(len(ELEVENLABS_API_KEYS)):
+            api_key = get_next_elevenlabs_key()
+            try:
+                el_response = http_requests.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+                    headers={
+                        "xi-api-key": api_key,
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "text": cleaned_text,
+                        "model_id": "eleven_turbo_v2",
+                        "voice_settings": {
+                            "stability": 0.4,
+                            "similarity_boost": 0.75,
+                            "style": 0.3,
+                            "use_speaker_boost": True
+                        }
+                    },
+                    timeout=15
+                )
+
+                if el_response.status_code == 200:
+                    return Response(
+                        el_response.content,
+                        mimetype="audio/mpeg",
+                        headers={
+                            "Content-Type": "audio/mpeg",
+                            "Access-Control-Allow-Origin": "*",
+                        }
+                    )
+                elif el_response.status_code == 429:
+                    print(f"[ElevenLabs] Quota hit on key ...{api_key[-4:]}, rotating...")
+                    last_error = f"429 quota hit on key ...{api_key[-4:]}"
+                    continue
+                else:
+                    last_error = f"ElevenLabs error {el_response.status_code}: {el_response.text}"
+                    print(f"[ElevenLabs] {last_error}")
+                    break
+
+            except http_requests.exceptions.Timeout:
+                print(f"[ElevenLabs] Timeout on key ...{api_key[-4:]}, rotating...")
+                last_error = "Request timed out"
+                continue
+
+        return jsonify({"error": last_error or "All ElevenLabs keys exhausted"}), 503
+
     except Exception as e:
         import traceback; print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
-
+        
 
 
 # ── ENDPOINT 1: /therapy-session ────────────────────────────
