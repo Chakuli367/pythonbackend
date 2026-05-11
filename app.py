@@ -46,6 +46,26 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
+
+@app.before_request
+def handle_options():
+    if request.method == 'OPTIONS':
+        res = Response()
+        res.headers['Access-Control-Allow-Origin'] = '*'
+        res.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        res.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        res.headers['Access-Control-Max-Age'] = '3600'
+        res.status_code = 200
+        return res
+        
+
 # Load Firebase config from environment variable
 firebase_config_json = os.environ.get("FIREBASE_CONFIG")
 if not firebase_config_json:
@@ -390,7 +410,14 @@ def transcribe():
 @app.route('/speak', methods=['POST', 'OPTIONS'])
 def speak():
     if request.method == 'OPTIONS':
-        return '', 204
+        res = Response()
+        res.headers['Access-Control-Allow-Origin'] = '*'
+        res.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        res.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        res.headers['Access-Control-Max-Age'] = '3600'
+        res.status_code = 200
+        return res
+        
     try:
         data = request.get_json()
         text = data.get("text", "").strip()
