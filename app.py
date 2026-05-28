@@ -833,189 +833,184 @@ def therapy_session_history():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
         
- 
 # ================== PHASE CONFIG ==================
+# Phase 0 (frontend-only): Condition selector — user taps cards + optional custom input
+# Phase 1: Companion personality calibration (chat)
+# Phase 2: Personal context & memory seeding (chat)
+# Phase 3: Rhythm & availability (chat)
+# Phase 4: Confirmation → companion profile generated
+# Phase 5: Done — companion profile active
+
 PHASE_REQUIREMENTS = {
-    1: ["problem", "context", "emotion", "impact"],
-    2: ["skill_gaps", "tips"],
-    3: ["locations", "schedule", "anxiety_issues"],
-    4: ["analyzed_schedule", "optimal_times", "energy_map"]
+    1: ["companion_name", "companion_persona", "support_style", "topics_to_avoid"],
+    2: ["emotional_state", "important_people", "ongoing_situations", "goals"],
+    3: ["check_in_frequency", "best_times", "current_stressors", "notification_preference"],
+    4: ["confirmation"],
 }
- 
+
+# ================== CONDITION CATALOG ==================
+# Sent to frontend on /init-session so the card selector is always in sync with backend.
+# Each entry: id, label, emoji, description (shown on card), category
+
+CONDITION_CATALOG = [
+    # Mental health
+    {"id": "anxiety",          "label": "Anxiety",               "emoji": "😰", "description": "Worry, panic, overthinking", "category": "mental_health"},
+    {"id": "depression",       "label": "Depression",            "emoji": "🌧",  "description": "Low mood, emptiness, no motivation", "category": "mental_health"},
+    {"id": "stress",           "label": "Stress & Burnout",      "emoji": "🔥", "description": "Overwhelm, exhaustion, pressure", "category": "mental_health"},
+    {"id": "loneliness",       "label": "Loneliness",            "emoji": "🫧", "description": "Feeling disconnected or isolated", "category": "mental_health"},
+    {"id": "anger",            "label": "Anger & Frustration",   "emoji": "⚡", "description": "Irritability, rage, resentment", "category": "mental_health"},
+    {"id": "grief",            "label": "Grief & Loss",          "emoji": "🕊",  "description": "Loss of a person, relationship, or chapter", "category": "mental_health"},
+    {"id": "trauma",           "label": "Trauma & PTSD",         "emoji": "🧩", "description": "Flashbacks, hypervigilance, past wounds", "category": "mental_health"},
+    {"id": "ocd",              "label": "OCD",                   "emoji": "🔁", "description": "Intrusive thoughts, compulsions, rituals", "category": "mental_health"},
+    # Relationships
+    {"id": "relationship",     "label": "Relationship Issues",   "emoji": "💔", "description": "Conflict, breakups, communication", "category": "relationships"},
+    {"id": "social_anxiety",   "label": "Social Anxiety",        "emoji": "👥", "description": "Fear of judgment, avoidance, shyness", "category": "relationships"},
+    {"id": "family",           "label": "Family Stress",         "emoji": "🏠", "description": "Parent, sibling, or household tension", "category": "relationships"},
+    # Life & identity
+    {"id": "self_esteem",      "label": "Self-Esteem",           "emoji": "🪞", "description": "Self-doubt, shame, not feeling enough", "category": "identity"},
+    {"id": "purpose",          "label": "Purpose & Direction",   "emoji": "🧭", "description": "Lost, stuck, unsure what you want", "category": "identity"},
+    {"id": "identity",         "label": "Identity & Belonging",  "emoji": "🌈", "description": "Who am I? Where do I fit?", "category": "identity"},
+    # Physical & lifestyle
+    {"id": "sleep",            "label": "Sleep Problems",        "emoji": "🌙", "description": "Insomnia, nightmares, exhaustion", "category": "lifestyle"},
+    {"id": "adhd",             "label": "ADHD & Focus",          "emoji": "🎯", "description": "Distraction, impulsivity, overwhelm", "category": "lifestyle"},
+    {"id": "eating",           "label": "Eating & Body Image",   "emoji": "🍃", "description": "Difficult relationship with food or body", "category": "lifestyle"},
+]
+
 # ================== AGENT PROMPTS ==================
- 
+
 PHASE_1_PROMPT = """
 # AGENT IDENTITY
-You are Jordan, a 28-year-old mentor who went from socially awkward engineering student to confident communicator. You struggled with eye contact, small talk, and reading social cues. You understand the anxiety, shame, and loneliness that comes with social struggles.
- 
-# YOUR MISSION (PHASE 1: ROOT CAUSE DISCOVERY)
-The user has submitted their intake form data. Your job is to:
-1. Acknowledge their struggle with empathy and personal stories
-2. Extract key information from their responses
-3. Validate their feelings
-4. Keep responses SHORT and conversational (3-4 sentences max)
- 
-# RESPONSE FORMAT
-You MUST respond with valid JSON:
-```json
+You are the user's AI companion — warm, curious, and non-clinical. You're not a therapist.
+You're the kind of presence that actually listens and remembers things.
+
+The user has just selected their condition(s) from a card selector. You already know what they're
+dealing with — don't ask them to repeat it. Now your job is to help them shape YOU as a companion.
+
+# YOUR MISSION (PHASE 1: COMPANION CALIBRATION)
+You know their condition(s). Your job now:
+1. Acknowledge what they're going through — ONE sentence, warm and specific to their condition
+2. Ask them what kind of support feels right (listen / challenge / distract / just be there)
+3. Ask if they want to give you a name and pick a vibe (calm, warm, direct)
+4. Extract those preferences
+
+# RESPONSE FORMAT — valid JSON only, no markdown outside it:
 {
-  "message": "Your empathetic response acknowledging their specific problem",
+  "message": "Your warm 3-4 sentence opener + questions",
   "extracted_data": {
-    "problem": "brief summary of their main challenge",
-    "context": "where this happens most",
-    "emotion": "their emotional state",
-    "impact": "what this has cost them"
+    "companion_name": "name they chose or null",
+    "companion_persona": "calm | warm | direct | null",
+    "support_style": "listener | challenger | distractor | presence | null",
+    "topics_to_avoid": ["topic1"] or []
   },
-  "ready_for_next_phase": true
+  "ready_for_next_phase": false
 }
-```
- 
-# CONVERSATION RULES
-1. Be casual - "Hey", "I get it", "That sucks"
-2. Share brief personal failures
-3. No generic advice yet
-4. Always set ready_for_next_phase to true after processing form data
+
+Set ready_for_next_phase to true only once you have companion_name AND companion_persona AND support_style.
+Keep asking naturally if still missing any of these — one question at a time, conversational.
+
+# TONE RULES
+- Never clinical ("symptoms", "disorder", "treatment")
+- Short messages — 3-5 sentences max
+- Warm, like a friend who gets it
+- Never say "I understand how you feel" — too generic
 """
- 
+
 PHASE_2_PROMPT = """
 # AGENT IDENTITY
-You are Jordan, now you know their struggle. Time to get tactical.
- 
-# YOUR MISSION (PHASE 2: SKILL GAP ANALYSIS)
-The user submitted their skills assessment. Based on their form data:
-1. Validate their past attempts (if any)
-2. Identify their weakest skill area
-3. Provide ONE concrete, testable technique
-4. Extract structured skill data
- 
-# RESPONSE FORMAT
-```json
+You are their companion. You know their condition(s) and how they want to be supported.
+Now you're building your memory — the things that make every future conversation feel personal.
+
+# YOUR MISSION (PHASE 2: MEMORY SEEDING)
+1. Ask about the people in their life who matter (or stress them out)
+2. Ask what's actually going on for them right now — one real situation
+3. Ask what they're hoping for or working toward
+4. Keep it conversational — one question at a time
+
+# RESPONSE FORMAT — valid JSON only:
 {
-  "message": "Your response with ONE technique (4-5 sentences max)",
+  "message": "Your conversational message (3-4 sentences max)",
   "extracted_data": {
-    "skill_gaps": "their weakest area identified",
-    "tips": "one concrete technique they can use",
-    "past_attempts": "what they've tried before"
+    "emotional_state": "how they seem right now in 2-3 words",
+    "important_people": ["person + context, e.g. 'Maya - best friend they're fighting with'"],
+    "ongoing_situations": ["situation in 1 sentence"],
+    "goals": ["what they're working toward"]
   },
-  "ready_for_next_phase": true
+  "ready_for_next_phase": false
 }
-```
- 
-Keep it SHORT - 4-5 sentences max.
+
+Set ready_for_next_phase to true once you have at least one entry each in
+important_people, ongoing_situations, and goals.
+emotional_state you infer from how they write — don't ask directly.
 """
- 
+
 PHASE_3_PROMPT = """
 # AGENT IDENTITY
-You are Jordan, accountability partner mode.
- 
-# YOUR MISSION (PHASE 3: LOGISTICS)
-User submitted their logistics form. Your job:
-1. Acknowledge their commitment level
-2. Address their top anxiety trigger
-3. Confirm their practice locations make sense
-4. Extract and structure the data
- 
-# RESPONSE FORMAT
-```json
+You are their companion, almost fully configured. Last step — figuring out when to show up.
+
+# YOUR MISSION (PHASE 3: RHYTHM & AVAILABILITY)
+1. Ask when they usually feel worst (time of day / situations)
+2. Ask how often they'd want to check in — daily, few times a week, whenever they need
+3. Ask if they want gentle nudges or to come to you on their own
+4. Keep it short, no pressure
+
+# RESPONSE FORMAT — valid JSON only:
 {
-  "message": "Your tactical validation (3-4 sentences)",
+  "message": "Your conversational message (3-4 sentences max)",
   "extracted_data": {
-    "locations": ["location1", "location2"],
-    "schedule": "when they can practice",
-    "anxiety_issues": "their main anxiety trigger",
-    "commitment_level": 8
+    "check_in_frequency": "daily | few_times_week | on_demand",
+    "best_times": ["morning", "late night"] etc.,
+    "current_stressors": ["brief stressor description"],
+    "notification_preference": "gentle_nudges | only_when_i_come | both"
   },
-  "ready_for_next_phase": true
+  "ready_for_next_phase": false
 }
-```
+
+Set ready_for_next_phase to true once you have check_in_frequency AND notification_preference.
 """
- 
-PHASE_4_ANALYSIS_PROMPT = """
+
+PHASE_4_CONFIRMATION_PROMPT = """
 # AGENT IDENTITY
-You are Jordan, analyzing their schedule like a coach planning training sessions.
- 
-# YOUR MISSION (PHASE 4: SCHEDULE OPTIMIZATION)
-User submitted their weekly schedule. You need to:
- 
-1. ANALYZE THEIR SCHEDULE for optimal practice windows
-2. EXTRACT STRUCTURED DATA - Return this JSON:
-```json
+You are their companion. Everything is set. Now you present yourself — fully formed — and ask
+if they're ready to begin.
+
+# YOUR MISSION (PHASE 4: COMPANION BORN)
+Review ALL collected data and send a final message that:
+1. Introduces yourself by the name they chose (or a default if none given)
+2. Shows you already know them — reference their condition(s), one person they mentioned,
+   one situation they shared, and their goal
+3. Makes it feel like you were always here — not "setup complete"
+4. Ends with "Ready when you are." — nothing more
+
+# RESPONSE FORMAT — valid JSON only:
 {
-  "message": "Brief analysis in your casual Jordan voice (2-3 sentences)",
-  "extracted_data": {
-    "analyzed_schedule": {
-      "best_practice_windows": ["Monday 7-8am at Starbucks", "Wednesday 6pm at gym"],
-      "existing_social_opportunities": ["Daily standup meetings", "Friday team lunch"],
-      "avoid_times": ["Monday mornings (stressed)", "Friday afternoons (deadline crunch)"],
-      "energy_peaks": ["Mid-morning (9am-12pm)", "Early evening (5-7pm)"]
-    },
-    "optimal_times": [
-      {
-        "day": "Monday",
-        "time": "9:30am",
-        "location": "Coffee shop on commute",
-        "energy_level": "high",
-        "difficulty": "easy",
-        "task": "Smile at barista + comment on coffee"
-      }
-    ],
-    "energy_map": {
-      "high_energy_windows": ["Mon/Wed/Fri 9am-12pm"],
-      "medium_energy_windows": ["Tue/Thu afternoons"],
-      "low_energy_windows": ["After 8pm weekdays"]
-    }
-  },
-  "ready_for_next_phase": true
-}
-```
- 
-3. BE STRATEGIC:
-- Start with high-energy + existing social touchpoints
-- Progressive difficulty: morning coffee small talk → gym longer convos → work networking
-- Avoid stacking practices on their worst days
-"""
- 
-PHASE_5_CONFIRMATION_PROMPT = """
-# AGENT IDENTITY
-You are Jordan, doing final confirmation before generating the plan.
- 
-# YOUR MISSION (PHASE 5: FINAL CONFIRMATION)
-Review ALL collected data and provide a summary for the user to confirm.
- 
-# RESPONSE FORMAT
-```json
-{
-  "message": "Here's what we've got. [Summary in 3-4 sentences]. Sound right?",
+  "message": "Your personal intro message (5-6 sentences, specific, warm)",
   "confirmation_summary": {
-    "problem": "Brief statement",
-    "skill_focus": "Main skill gap",
-    "locations": ["Location 1", "Location 2"],
-    "schedule": "When they'll practice",
-    "commitment": "X/10"
+    "companion_name": "final name",
+    "companion_persona": "calm | warm | direct",
+    "conditions": ["condition ids"],
+    "support_style": "their preference",
+    "check_in_frequency": "their preference",
+    "memory_snapshot": "1-2 sentence summary of what you now remember about them"
   },
-  "ready_to_generate_plan": false
+  "ready_to_activate": false
 }
-```
- 
-When user confirms with "yes", "looks good", "let's do it":
-```json
+
+When user confirms (yes / ready / let's go / sounds right):
 {
-  "message": "Let's fucking go. Generating your 5-day plan now...",
-  "ready_to_generate_plan": true
+  "message": "One line. Warm. Like you've been waiting.",
+  "ready_to_activate": true
 }
-```
 """
- 
+
 PHASE_PROMPTS = {
     1: PHASE_1_PROMPT,
     2: PHASE_2_PROMPT,
     3: PHASE_3_PROMPT,
-    4: PHASE_4_ANALYSIS_PROMPT,
-    5: PHASE_5_CONFIRMATION_PROMPT
+    4: PHASE_4_CONFIRMATION_PROMPT,
 }
- 
+
 # ================== HELPERS ==================
- 
+
 def extract_json_from_response(text):
     json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
     if json_match:
@@ -1030,8 +1025,8 @@ def extract_json_from_response(text):
         except json.JSONDecodeError:
             pass
     return None
- 
- 
+
+
 def store_extracted(session_state, extracted, phase):
     phase_key = f"phase_{phase}"
     if phase_key not in session_state["phase_data"]:
@@ -1039,101 +1034,78 @@ def store_extracted(session_state, extracted, phase):
     for k, v in extracted.items():
         if v and v != "null" and v is not None:
             session_state["phase_data"][phase_key][k] = v
- 
- 
-def generate_5_day_plan(session_state):
-    phase1 = session_state["phase_data"].get("phase_1", {})
-    phase2 = session_state["phase_data"].get("phase_2", {})
-    phase3 = session_state["phase_data"].get("phase_3", {})
-    phase4 = session_state["phase_data"].get("phase_4", {})
- 
-    problem  = phase1.get("problem", "social difficulties")
-    context  = phase1.get("context", "various settings")
-    skill    = phase2.get("skill_gaps", "conversation skills")
-    tip      = phase2.get("tips", "Start with observation-based comments")
-    locations = phase3.get("locations", ["coffee shop", "gym"])
-    schedule  = phase3.get("schedule", "weekday mornings")
-    anxiety   = phase3.get("anxiety_issues", "fear of judgment")
-    optimal_times     = phase4.get("optimal_times", [])
-    analyzed_schedule = phase4.get("analyzed_schedule", {})
- 
-    difficulty_progression = [
-        ("Warm-up",          "Smile and make eye contact with 3 people",                      "5 minutes"),
-        ("Ice-breaker",      "Give one genuine compliment to a stranger",                      "10 minutes"),
-        ("Mini-conversation","Ask someone a simple question (time, directions, recommendation)","15 minutes"),
-        ("Extended chat",    f"Have a 2-minute conversation using the technique: {tip}",        "20 minutes"),
-        ("Full practice",    "Initiate and maintain a 5+ minute conversation",                 "30 minutes"),
-    ]
- 
-    days, tasks = [], []
-    start_date = datetime.now()
- 
-    for d in range(1, 6):
-        day_date = start_date + timedelta(days=d - 1)
-        day_level, day_task_template, est_time = difficulty_progression[d - 1]
- 
-        if d <= len(optimal_times):
-            optimal  = optimal_times[d - 1]
-            location = optimal.get("location", locations[0] if locations else "coffee shop")
-            scheduled_time = optimal.get("time", "09:00")
-        else:
-            location = locations[0] if locations else "coffee shop"
-            scheduled_time = "09:00"
- 
-        full_description = (
-            f"📍 {location} | 🎯 {day_task_template} | "
-            f"💡 Remember: {tip} | 😰 If anxious: {anxiety}"
-        )
-        task_id = f"day{d}_task"
-        tasks.append({
-            "id": task_id,
-            "title": f"Day {d} - {day_level}",
-            "description": full_description,
-            "done": False,
-            "xp": d * 10,
-            "scheduled_time": scheduled_time,
-            "type": "social_practice",
-            "location": location,
-            "estimatedTime": est_time,
-            "comfortLevel": "challenging" if d >= 4 else "moderate" if d >= 2 else "easy",
-            "contextAnchor": context,
-            "skill_focus": skill,
-            "difficulty": d,
-        })
-        days.append({
-            "day": d,
-            "date": day_date.strftime("%Y-%m-%d"),
-            "title": f"Day {d}: {day_level}",
-            "tasks": [{"task_number": 1, "description": full_description, "done": False}],
-            "completed": False,
-            "difficulty": d,
-            "focus": day_level,
-        })
- 
+
+
+def initialize_companion_profile(session_state):
+    """
+    Replaces generate_5_day_plan().
+    Assembles the companion_profile object from all phase data.
+    Stored in Firestore under users/{user_id}/companion/profile.
+    """
+    p0 = session_state["phase_data"].get("phase_0", {})   # condition selector
+    p1 = session_state["phase_data"].get("phase_1", {})   # calibration
+    p2 = session_state["phase_data"].get("phase_2", {})   # memory seeding
+    p3 = session_state["phase_data"].get("phase_3", {})   # rhythm
+
+    conditions         = p0.get("conditions", [])
+    primary_condition  = p0.get("primary_condition", conditions[0] if conditions else "general")
+    custom_issue       = p0.get("custom_issue", None)
+
+    companion_name     = p1.get("companion_name") or "Luna"
+    companion_persona  = p1.get("companion_persona") or "warm"
+    support_style      = p1.get("support_style") or "listener"
+    topics_to_avoid    = p1.get("topics_to_avoid") or []
+
+    emotional_state    = p2.get("emotional_state") or "uncertain"
+    important_people   = p2.get("important_people") or []
+    ongoing_situations = p2.get("ongoing_situations") or []
+    goals              = p2.get("goals") or []
+
+    check_in_frequency       = p3.get("check_in_frequency") or "on_demand"
+    best_times               = p3.get("best_times") or []
+    current_stressors        = p3.get("current_stressors") or []
+    notification_preference  = p3.get("notification_preference") or "only_when_i_come"
+
     return {
-        "days": days,
-        "tasks": tasks,
-        "user_context": {
-            "problem": problem,
-            "skill_gaps": skill,
-            "practice_locations": locations,
-            "schedule": schedule,
-            "primary_anxiety": anxiety,
-            "analyzed_schedule": analyzed_schedule,
+        "companion_name":    companion_name,
+        "companion_persona": companion_persona,
+        "support_style":     support_style,
+        "topics_to_avoid":   topics_to_avoid,
+        "conditions": {
+            "all":     conditions,
+            "primary": primary_condition,
+            "custom":  custom_issue,
         },
+        "memory": {
+            "emotional_state":    emotional_state,
+            "important_people":   important_people,
+            "ongoing_situations": ongoing_situations,
+            "goals":              goals,
+            "current_stressors":  current_stressors,
+        },
+        "schedule": {
+            "check_in_frequency":      check_in_frequency,
+            "best_times":              best_times,
+            "notification_preference": notification_preference,
+        },
+        "sessions":    0,
+        "created_at":  datetime.utcnow().isoformat(),
+        "status":      "active",
     }
- 
- 
+
+
 def _build_llm_payload(phase, form_data, session_state):
     """Build the Groq request payload for a given phase + form data."""
     prompt_template = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
     system_content = (
         f"{prompt_template}\n\n"
-        f"USER'S FORM SUBMISSION FOR PHASE {phase}:\n"
+        f"USER'S CONDITIONS (from card selector):\n"
+        f"{json.dumps(session_state['phase_data'].get('phase_0', {}), indent=2)}\n\n"
+        f"PHASE {phase} INPUT:\n"
         f"{json.dumps(form_data, indent=2)}\n\n"
         f"PREVIOUSLY COLLECTED DATA:\n"
         f"{json.dumps(session_state.get('phase_data', {}), indent=2)}\n\n"
-        "Analyze the form data, extract the required information, and respond in the specified JSON format."
+        "Analyze the input, extract the required information, respond in the specified JSON format."
     )
     return {
         "model": "llama-3.3-70b-versatile",
@@ -1141,79 +1113,71 @@ def _build_llm_payload(phase, form_data, session_state):
         "max_tokens": 1000,
         "messages": [{"role": "system", "content": system_content}],
     }
- 
- 
-def _save_session_background(session_ref, update_data, task_overview, user_id):
+
+
+def _save_session_background(session_ref, update_data, companion_profile, user_id):
     """Fire-and-forget Firestore write."""
     try:
-        if task_overview:
-            update_data["plan_generated"] = True
-            update_data["task_overview"] = task_overview
-            course_ref = (
+        if companion_profile:
+            update_data["companion_activated"] = True
+            update_data["companion_profile"] = companion_profile
+            # Store companion profile under users/{user_id}/companion/profile
+            companion_ref = (
                 db.collection("users")
-                  .document(user_id)
-                  .collection("datedcourses")
-                  .document("life_skills")
+                .document(user_id)
+                .collection("companion")
+                .document("profile")
             )
-            course_ref.set(
-                {
-                    "user_id": user_id,
-                    "created_at": datetime.utcnow().isoformat(),
-                    "task_overview": task_overview,
-                    "status": "active",
-                    "completion_rate": 0,
-                },
-                merge=True,
-            )
+            companion_ref.set(companion_profile, merge=True)
         session_ref.set(update_data, merge=True)
     except Exception as e:
         print(f"[BACKGROUND SAVE ERROR] {e}")
- 
- 
+
+
 # ================== JOB STATUS HELPERS ==================
- 
+
 def _set_job_status(job_id, status, payload=None):
     doc = {"status": status, "updated_at": firestore.SERVER_TIMESTAMP}
     if payload:
         doc.update(payload)
     db.collection("jobs").document(job_id).set(doc, merge=True)
- 
- 
+
+
 def _get_job(job_id):
     doc = db.collection("jobs").document(job_id).get()
     return doc.to_dict() if doc.exists else None
- 
- 
+
+
 # ================== BACKGROUND WORKER ==================
- 
+
 def _process_job(job_id, user_id, phase, form_data, api_key):
     """
     Runs in a background thread.
     Calls Groq (streaming), accumulates the full response, then:
-      - stores extracted data
-      - advances phase
-      - writes result to Firestore jobs/{job_id}
+    - stores extracted data
+    - advances phase
+    - writes result to Firestore jobs/{job_id}
     The SSE endpoint reads jobs/{job_id} to push tokens to the client.
     """
     try:
-        # ── 1. Load session (single read) ──────────────────────────────────────
+        # ── 1. Load session ──────────────────────────────────────────────────
         session_ref = db.collection("sessions").document(user_id)
         session_doc = session_ref.get()
         session_state = session_doc.to_dict() if session_doc.exists else {
             "phase": phase,
             "user_id": user_id,
-            "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+            "phase_data": {f"phase_{i}": {} for i in range(0, 5)},
             "messages": [],
             "forms_completed": [],
         }
- 
+
         payload = _build_llm_payload(phase, form_data, session_state)
- 
-        # ── 2. Stream from Groq, write tokens to Firestore incrementally ────────
+
+        # ── 2. Stream from Groq ──────────────────────────────────────────────
         full_text = ""
         token_buffer = []
-        flush_every = 5  # write to Firestore every N tokens (reduces writes)
- 
+        flush_every = 5
+
         with httpx.stream(
             "POST",
             "https://api.groq.com/openai/v1/chat/completions",
@@ -1245,42 +1209,47 @@ def _process_job(job_id, user_id, phase, form_data, api_key):
                             token_buffer = []
                 except (json.JSONDecodeError, KeyError):
                     continue
- 
-        # ── 3. Parse final JSON from full LLM response ──────────────────────────
+
+        # ── 3. Parse final JSON ──────────────────────────────────────────────
         parsed = extract_json_from_response(full_text)
         if not parsed:
             _set_job_status(job_id, "error", {"error": "Failed to parse LLM response", "raw": full_text})
             return
- 
+
         extracted_data = parsed.get("extracted_data", {})
         if extracted_data:
             store_extracted(session_state, extracted_data, phase)
- 
+
         forms_completed = session_state.get("forms_completed", [])
         if phase not in forms_completed:
             forms_completed.append(phase)
- 
+
         ready_for_next = parsed.get("ready_for_next_phase", False)
-        task_overview = None
- 
+        companion_profile = None
+
         if ready_for_next:
-            next_phase = 6 if phase == 4 else phase + 1
-            if phase == 4:
-                task_overview = generate_5_day_plan(session_state)
+            # phases 1→2→3→4, after phase 3 confirmed → 5 (done)
+            next_phase = phase + 1
         else:
             next_phase = phase
- 
-        # ── 4. Write final result to jobs doc ──────────────────────────────────
+
+        # Phase 4 confirmation fires companion profile generation
+        if phase == 4 and parsed.get("ready_to_activate", False):
+            companion_profile = initialize_companion_profile(session_state)
+            next_phase = 5
+
+        # ── 4. Write final result to jobs doc ────────────────────────────────
         _set_job_status(job_id, "done", {
-            "message":     parsed.get("message", ""),
-            "partial":     full_text,
-            "next_phase":  next_phase,
-            "extracted":   extracted_data,
-            "task_overview": task_overview,
-            "phase_data":  session_state["phase_data"],
+            "message": parsed.get("message", ""),
+            "partial": full_text,
+            "next_phase": next_phase,
+            "extracted": extracted_data,
+            "companion_profile": companion_profile,
+            "confirmation_summary": parsed.get("confirmation_summary"),
+            "phase_data": session_state["phase_data"],
         })
- 
-        # ── 5. Persist session (background, non-blocking) ──────────────────────
+
+        # ── 5. Persist session (background) ──────────────────────────────────
         update_data = {
             "phase": next_phase,
             "user_id": user_id,
@@ -1290,30 +1259,25 @@ def _process_job(job_id, user_id, phase, form_data, api_key):
         }
         threading.Thread(
             target=_save_session_background,
-            args=(session_ref, update_data, task_overview, user_id),
+            args=(session_ref, update_data, companion_profile, user_id),
             daemon=True,
         ).start()
- 
-        # ── 6. Prefetch next phase session data ────────────────────────────────
+
+        # ── 6. Prefetch next phase ────────────────────────────────────────────
         if next_phase <= 4:
             threading.Thread(
                 target=_prefetch_next_phase,
                 args=(user_id, next_phase),
                 daemon=True,
             ).start()
- 
+
     except httpx.TimeoutException:
         _set_job_status(job_id, "error", {"error": "LLM request timed out"})
     except Exception as e:
         _set_job_status(job_id, "error", {"error": str(e), "traceback": traceback.format_exc()})
- 
- 
+
+
 def _prefetch_next_phase(user_id, next_phase):
-    """
-    Warm up the session cache by reading it now, while the user is reading Jordan's reply.
-    Stores a warmed copy in jobs/prefetch_{user_id} so the next submit-phase-data
-    can skip its Firestore read.
-    """
     try:
         session_doc = db.collection("sessions").document(user_id).get()
         if session_doc.exists:
@@ -1324,62 +1288,128 @@ def _prefetch_next_phase(user_id, next_phase):
             })
     except Exception as e:
         print(f"[PREFETCH ERROR] {e}")
- 
- 
+
+
 # ================== ENDPOINTS ==================
- 
+
 @app.route("/init-session", methods=["POST"])
 def init_session():
-    data    = request.json
+    data = request.json
     user_id = data.get("user_id", "anonymous")
- 
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
- 
+
     try:
         session_ref = db.collection("sessions").document(user_id)
         session_doc = session_ref.get()
- 
+
         if session_doc.exists:
             existing = session_doc.to_dict()
             return jsonify({
-                "success":     True,
-                "message":     "Reconnected to your session. Let's continue!",
-                "phase":       existing.get("phase", 1),
-                "user_id":     user_id,
+                "success": True,
+                "message": "Welcome back.",
+                "phase": existing.get("phase", 1),
+                "user_id": user_id,
                 "reconnected": True,
+                "condition_catalog": CONDITION_CATALOG,
             })
- 
+
         session_data = {
             "phase": 1,
             "user_id": user_id,
-            "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+            "phase_data": {f"phase_{i}": {} for i in range(0, 5)},
             "messages": [],
             "forms_completed": [],
             "created_at": firestore.SERVER_TIMESTAMP,
         }
         session_ref.set(session_data)
- 
+
         return jsonify({
-            "success":     True,
-            "message":     (
-                "Hey! I'm Jordan. I used to be that person who'd rehearse conversations in the shower, "
-                "then freeze when actually talking to people. Took me years to figure this out. Ready to start?"
-            ),
-            "phase":       1,
-            "user_id":     user_id,
+            "success": True,
+            "phase": 1,
+            "user_id": user_id,
             "reconnected": False,
+            # Frontend uses this to populate the condition selector cards
+            "condition_catalog": CONDITION_CATALOG,
         })
- 
+
     except Exception as e:
         return jsonify({
-            "error":     "Session initialization failed",
-            "details":   str(e),
+            "error": "Session initialization failed",
+            "details": str(e),
             "traceback": traceback.format_exc(),
         }), 500
- 
- 
-# ── NEW: enqueue job, return immediately ────────────────────────────────────
+
+
+# ── NEW: receive condition selector result (phase 0, no LLM needed) ──────────
+@app.route("/select-conditions", methods=["POST"])
+def select_conditions():
+    """
+    Called when the user taps Done on the condition selector screen.
+    No LLM involved — just stores selections and advances to phase 1.
+
+    Body:
+    {
+      "user_id": "...",
+      "conditions": ["anxiety", "loneliness"],   // selected condition ids
+      "primary_condition": "anxiety",             // the one they marked as primary
+      "custom_issue": "I struggle with..."        // optional free text
+    }
+    """
+    data = request.json
+    user_id          = data.get("user_id")
+    conditions       = data.get("conditions", [])
+    primary_condition = data.get("primary_condition")
+    custom_issue     = data.get("custom_issue", "")
+
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    if not conditions:
+        return jsonify({"error": "at least one condition required"}), 400
+    if not primary_condition:
+        primary_condition = conditions[0]
+
+    try:
+        session_ref = db.collection("sessions").document(user_id)
+        session_doc = session_ref.get()
+
+        if session_doc.exists:
+            session_state = session_doc.to_dict()
+        else:
+            session_state = {
+                "phase": 1,
+                "user_id": user_id,
+                "phase_data": {f"phase_{i}": {} for i in range(0, 5)},
+                "messages": [],
+                "forms_completed": [],
+            }
+
+        # Store condition data in phase_0
+        session_state["phase_data"]["phase_0"] = {
+            "conditions": conditions,
+            "primary_condition": primary_condition,
+            "custom_issue": custom_issue if custom_issue else None,
+        }
+
+        session_ref.set({
+            **session_state,
+            "phase": 1,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+
+        return jsonify({
+            "success": True,
+            "phase": 1,
+            "conditions": conditions,
+            "primary_condition": primary_condition,
+        })
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to save conditions: {e}"}), 500
+
+
+# ── Enqueue job, return immediately ──────────────────────────────────────────
 @app.route("/submit-phase-data", methods=["POST"])
 def submit_phase_data():
     """
@@ -1387,12 +1417,12 @@ def submit_phase_data():
     The actual LLM call happens in a background thread.
     Client polls /job-status/<job_id> or connects to /stream/<job_id>.
     """
-    data      = request.json
+    data = request.json
     user_id   = data.get("user_id")
     phase     = data.get("phase")
     form_data = data.get("form_data")
     api_key   = data.get("api_key")
- 
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
     if not api_key:
@@ -1401,28 +1431,28 @@ def submit_phase_data():
         return jsonify({"error": "form_data required"}), 400
     if not phase:
         return jsonify({"error": "phase required"}), 400
- 
+
     job_id = str(uuid.uuid4())
- 
+
     # Write pending job to Firestore (fast, small doc)
     db.collection("jobs").document(job_id).set({
-        "status":     "pending",
-        "user_id":    user_id,
-        "phase":      phase,
+        "status": "pending",
+        "user_id": user_id,
+        "phase": phase,
         "created_at": firestore.SERVER_TIMESTAMP,
     })
- 
+
     # Kick off background worker
     threading.Thread(
         target=_process_job,
         args=(job_id, user_id, phase, form_data, api_key),
         daemon=True,
     ).start()
- 
+
     return jsonify({"job_id": job_id, "status": "pending"}), 202
- 
- 
-# ── NEW: SSE stream — client connects here after getting job_id ─────────────
+
+
+# ── SSE stream — client connects here after getting job_id ───────────────────
 @app.route("/stream/<job_id>")
 def stream_job(job_id):
     """
@@ -1431,116 +1461,113 @@ def stream_job(job_id):
     Closes the stream when status == "done" or "error".
     """
     import time
- 
+
     def generate():
-        last_len    = 0
-        poll_ms     = 0.25   # 250 ms poll interval
-        max_wait_s  = 90     # hard timeout
-        elapsed     = 0
- 
-        yield "retry: 1000\n\n"  # tell client to retry after 1s on disconnect
- 
+        last_len = 0
+        poll_ms  = 0.25
+        max_wait_s = 90
+        elapsed  = 0
+
+        yield "retry: 1000\n\n"
+
         while elapsed < max_wait_s:
             try:
                 job = _get_job(job_id)
             except Exception:
                 yield "event: error\ndata: firestore read failed\n\n"
                 return
- 
+
             if not job:
                 yield "event: error\ndata: job not found\n\n"
                 return
- 
+
             status  = job.get("status", "pending")
             partial = job.get("partial", "")
- 
-            # Push any new tokens since last poll
+
             if len(partial) > last_len:
                 new_tokens = partial[last_len:]
-                # Send as a single SSE data line (JSON-encoded so client can parse safely)
                 yield f"data: {json.dumps({'token': new_tokens})}\n\n"
                 last_len = len(partial)
- 
+
             if status == "done":
-                # Send the final structured payload
                 final = {
-                    "done":          True,
-                    "message":       job.get("message", ""),
-                    "next_phase":    job.get("next_phase"),
-                    "extracted":     job.get("extracted", {}),
-                    "task_overview": job.get("task_overview"),
-                    "phase_data":    job.get("phase_data", {}),
+                    "done":                 True,
+                    "message":              job.get("message", ""),
+                    "next_phase":           job.get("next_phase"),
+                    "extracted":            job.get("extracted", {}),
+                    "companion_profile":    job.get("companion_profile"),
+                    "confirmation_summary": job.get("confirmation_summary"),
+                    "phase_data":           job.get("phase_data", {}),
                 }
                 yield f"event: done\ndata: {json.dumps(final)}\n\n"
                 return
- 
+
             if status == "error":
-                error_payload = {"error": job.get("error", "Unknown error")}
-                yield f"event: error\ndata: {json.dumps(error_payload)}\n\n"
+                yield f"event: error\ndata: {json.dumps({'error': job.get('error', 'Unknown error')})}\n\n"
                 return
- 
+
             time.sleep(poll_ms)
             elapsed += poll_ms
- 
+
         yield f"event: error\ndata: {json.dumps({'error': 'stream timeout'})}\n\n"
- 
+
     return Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control":               "no-cache",
-            "X-Accel-Buffering":           "no",    # disable nginx buffering
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
             "Access-Control-Allow-Origin": "*",
         },
     )
- 
- 
-# ── NEW: lightweight poll endpoint (alternative to SSE for mobile clients) ──
+
+
+# ── Lightweight poll endpoint (alternative to SSE for mobile clients) ─────────
 @app.route("/job-status/<job_id>")
 def job_status(job_id):
     """
     Simple polling fallback. Client hits this every ~500ms if SSE isn't supported.
-    Returns partial text + status so the client can show a typing indicator.
     """
     try:
         job = _get_job(job_id)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
- 
+
     if not job:
         return jsonify({"error": "job not found"}), 404
- 
+
     return jsonify({
-        "status":        job.get("status"),
-        "partial":       job.get("partial", ""),
-        "message":       job.get("message", ""),
-        "next_phase":    job.get("next_phase"),
-        "extracted":     job.get("extracted", {}),
-        "task_overview": job.get("task_overview"),
-        "phase_data":    job.get("phase_data", {}),
-        "error":         job.get("error"),
+        "status":               job.get("status"),
+        "partial":              job.get("partial", ""),
+        "message":              job.get("message", ""),
+        "next_phase":           job.get("next_phase"),
+        "extracted":            job.get("extracted", {}),
+        "companion_profile":    job.get("companion_profile"),
+        "confirmation_summary": job.get("confirmation_summary"),
+        "phase_data":           job.get("phase_data", {}),
+        "error":                job.get("error"),
     })
- 
- 
-# ── /chat: phases 1-4 conversational, 5 confirmation, 6 done ────────────────
+
+
+# ── /chat: conversational phases 1-4 + confirmation ──────────────────────────
 @app.route("/chat", methods=["POST"])
 def chat():
     data         = request.json
     user_id      = data.get("user_id")
     user_message = data.get("message", "")
     api_key      = data.get("api_key")
- 
+
     if not user_id or not api_key:
         return jsonify({"error": "user_id and api_key required"}), 400
- 
+
     try:
-        session_ref = db.collection("sessions").document(user_id)
-        session_doc = session_ref.get()
+        session_ref  = db.collection("sessions").document(user_id)
+        session_doc  = session_ref.get()
         if not session_doc.exists:
             session_state = {
                 "phase": 1,
                 "user_id": user_id,
-                "phase_data": {f"phase_{i}": {} for i in range(1, 6)},
+                "phase_data": {f"phase_{i}": {} for i in range(0, 5)},
                 "messages": [],
                 "forms_completed": [],
             }
@@ -1549,66 +1576,58 @@ def chat():
             session_state = session_doc.to_dict()
     except Exception as e:
         return jsonify({"error": f"Failed to load session: {e}"}), 500
- 
+
     phase = session_state.get("phase", 1)
- 
-    # ── Phase 6: already done ────────────────────────────────────────────────
-    if phase == 6:
+
+    # ── Phase 5: companion active, hand off to main sessions flow ────────────
+    if phase == 5:
         return jsonify({
-            "response": "Your plan is already generated! Check your dashboard to see your 5-day roadmap.",
-            "phase":    6,
+            "response": "Your companion is ready. Head to the sessions page to start talking.",
+            "phase": 5,
             "complete": True,
         })
- 
-    # ── Phase 5: confirmation conversation ──────────────────────────────────
-    if phase == 5:
-        confirm_words = ["yes", "looks good", "let's do it", "confirm", "correct", "yep", "yeah"]
-        modify_words  = ["no", "change", "modify", "different"]
- 
+
+    # ── Phase 4: confirmation conversation ───────────────────────────────────
+    if phase == 4:
+        confirm_words = ["yes", "looks good", "let's go", "ready", "confirm", "yep", "yeah", "sounds right"]
+        modify_words  = ["no", "change", "modify", "different", "wait"]
+
         if any(w in user_message.lower() for w in confirm_words):
             try:
-                task_overview = generate_5_day_plan(session_state)
-                course_ref = (
+                companion_profile = initialize_companion_profile(session_state)
+                companion_ref = (
                     db.collection("users")
-                      .document(user_id)
-                      .collection("datedcourses")
-                      .document("life_skills")
+                    .document(user_id)
+                    .collection("companion")
+                    .document("profile")
                 )
-                course_ref.set({
-                    "user_id":          user_id,
-                    "created_at":       datetime.utcnow().isoformat(),
-                    "phase_data":       session_state["phase_data"],
-                    "task_overview":    task_overview,
-                    "status":           "active",
-                    "completion_rate":  0,
-                }, merge=True)
+                companion_ref.set(companion_profile, merge=True)
                 session_ref.update({
-                    "phase":          6,
-                    "plan_generated": True,
-                    "updated_at":     firestore.SERVER_TIMESTAMP,
+                    "phase": 5,
+                    "companion_activated": True,
+                    "updated_at": firestore.SERVER_TIMESTAMP,
                 })
                 return jsonify({
-                    "response":       "🎉 Let's fucking go! Your 5-day plan is locked in.",
-                    "phase":          6,
-                    "plan_generated": True,
-                    "task_overview":  task_overview,
-                    "complete":       True,
+                    "response": "I'm here. Let's go.",
+                    "phase": 5,
+                    "companion_activated": True,
+                    "companion_profile": companion_profile,
+                    "complete": True,
                 })
             except Exception as e:
-                return jsonify({"error": "Failed to generate plan", "details": str(e)}), 500
- 
+                return jsonify({"error": "Failed to activate companion", "details": str(e)}), 500
+
         if any(w in user_message.lower() for w in modify_words):
             return jsonify({
-                "response":             "No worries. What do you want to change? Your schedule, locations, or the skill we're focusing on?",
-                "phase":                5,
+                "response": "No problem — what do you want to change? Your name for me, how I support you, or something else?",
+                "phase": 4,
                 "awaiting_modification": True,
             })
- 
-        # Generate confirmation summary via LLM (streaming-aware via job queue)
-        # For phase 5 we keep it synchronous since it's a short summary call
+
+        # Generate confirmation summary via LLM
         try:
             context = (
-                f"{PHASE_5_CONFIRMATION_PROMPT}\n\n"
+                f"{PHASE_4_CONFIRMATION_PROMPT}\n\n"
                 f"COLLECTED DATA:\n{json.dumps(session_state.get('phase_data', {}), indent=2)}\n\n"
                 f"USER MESSAGE: {user_message}\n\n"
                 "Generate a confirmation summary based on all collected data."
@@ -1617,117 +1636,127 @@ def chat():
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model":       "llama-3.3-70b-versatile",
+                    "model": "llama-3.3-70b-versatile",
                     "temperature": 0.7,
-                    "max_tokens":  600,
-                    "messages":    [{"role": "system", "content": context}],
+                    "max_tokens": 600,
+                    "messages": [{"role": "system", "content": context}],
                 },
                 timeout=30.0,
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             parsed  = extract_json_from_response(content)
- 
+
             if not parsed:
-                return jsonify({"response": "Here's what we've got. Let me summarize your plan. Sound right?", "phase": 5})
- 
+                return jsonify({"response": "Here's what I know about you so far. Sound right?", "phase": 4})
+
             return jsonify({
-                "response":               parsed.get("message", ""),
-                "confirmation_summary":   parsed.get("confirmation_summary", {}),
-                "phase":                  5,
-                "ready_to_generate_plan": parsed.get("ready_to_generate_plan", False),
+                "response":             parsed.get("message", ""),
+                "confirmation_summary": parsed.get("confirmation_summary", {}),
+                "phase": 4,
+                "ready_to_activate": parsed.get("ready_to_activate", False),
             })
         except Exception as e:
             return jsonify({"error": "AI processing failed", "details": str(e)}), 500
- 
-    # ── Phases 1–4: regular chat with Jordan ────────────────────────────────
+
+    # ── Phases 1–3: regular companion onboarding chat ────────────────────────
     try:
         messages = session_state.get("messages", [])
         messages.append({"role": "user", "content": user_message})
- 
+
         prompt_text = PHASE_PROMPTS.get(phase, PHASE_1_PROMPT)
         context = (
             f"{prompt_text}\n\n"
             f"CURRENT PHASE: {phase}\n\n"
+            f"USER'S CONDITIONS:\n{json.dumps(session_state['phase_data'].get('phase_0', {}), indent=2)}\n\n"
             f"COLLECTED DATA SO FAR:\n{json.dumps(session_state.get('phase_data', {}), indent=2)}\n\n"
             f"RECENT CONVERSATION:\n{json.dumps(messages[-5:], indent=2)}\n\n"
             f"USER'S LATEST MESSAGE: {user_message}\n\n"
             "Respond according to your phase instructions."
         )
- 
+
         llm_resp = httpx.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
-                "model":       "llama-3.3-70b-versatile",
+                "model": "llama-3.3-70b-versatile",
                 "temperature": 0.7,
-                "max_tokens":  800,
-                "messages":    [{"role": "system", "content": context}],
+                "max_tokens": 800,
+                "messages": [{"role": "system", "content": context}],
             },
             timeout=30.0,
         )
         llm_resp.raise_for_status()
         llm_content = llm_resp.json()["choices"][0]["message"]["content"]
-        parsed      = extract_json_from_response(llm_content)
- 
+        parsed = extract_json_from_response(llm_content)
+
         if not parsed:
             messages.append({"role": "assistant", "content": llm_content})
             session_ref.update({"messages": messages, "updated_at": firestore.SERVER_TIMESTAMP})
             return jsonify({"response": llm_content, "phase": phase, "phase_data": session_state.get("phase_data", {})})
- 
+
         ai_reply = parsed.get("message", llm_content)
         messages.append({"role": "assistant", "content": ai_reply})
- 
+
+        extracted_data = parsed.get("extracted_data", {})
+        if extracted_data:
+            store_extracted(session_state, extracted_data, phase)
+
         if parsed.get("ready_for_next_phase"):
             new_phase = phase + 1
             session_ref.update({
                 "phase":      new_phase,
                 "messages":   messages,
+                "phase_data": session_state["phase_data"],
                 "updated_at": firestore.SERVER_TIMESTAMP,
             })
             return jsonify({
-                "response":      ai_reply,
-                "phase":         new_phase,
-                "phase_data":    session_state.get("phase_data", {}),
+                "response":     ai_reply,
+                "phase":        new_phase,
+                "phase_data":   session_state.get("phase_data", {}),
                 "phase_complete": True,
             })
- 
-        session_ref.update({"messages": messages, "updated_at": firestore.SERVER_TIMESTAMP})
+
+        session_ref.update({
+            "messages":   messages,
+            "phase_data": session_state["phase_data"],
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
         return jsonify({
-            "response":        ai_reply,
-            "phase":           phase,
-            "phase_data":      session_state.get("phase_data", {}),
+            "response":       ai_reply,
+            "phase":          phase,
+            "phase_data":     session_state.get("phase_data", {}),
             "needs_more_info": parsed.get("needs_more_info", True),
         })
- 
+
     except Exception as e:
         return jsonify({
             "error":             "AI processing failed",
             "details":           str(e),
             "traceback":         traceback.format_exc(),
-            "fallback_response": "Sorry, I hit a snag. Can you rephrase that?",
+            "fallback_response": "Sorry, I hit a snag. Can you say that again?",
         }), 500
- 
- 
+
+
 @app.route("/get-session-status", methods=["POST"])
 def get_session_status():
     data    = request.json
     user_id = data.get("user_id")
- 
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
- 
+
     try:
         session_doc = db.collection("sessions").document(user_id).get()
         if not session_doc.exists:
             return jsonify({"error": "Session not found"}), 404
         s = session_doc.to_dict()
         return jsonify({
-            "user_id":        user_id,
-            "phase":          s.get("phase", 1),
-            "phase_data":     s.get("phase_data", {}),
+            "user_id":         user_id,
+            "phase":           s.get("phase", 1),
+            "phase_data":      s.get("phase_data", {}),
             "forms_completed": s.get("forms_completed", []),
-            "message_count":  len(s.get("messages", [])),
+            "message_count":   len(s.get("messages", [])),
         })
     except Exception as e:
         return jsonify({"error": f"Failed to get session: {e}"}), 500
@@ -5147,62 +5176,3 @@ def complete_task():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
