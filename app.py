@@ -3,6 +3,7 @@ import os
 import json
 import re
 import time
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TypedDict, Annotated, Literal
 from flask_cors import cross_origin
@@ -84,15 +85,19 @@ if not firebase_admin._apps:
 # Firestore client
 db = firestore.client()
 
-def save_to_firebase(user_id, category, doc_id, data):
+def save_to_firebase(user_id, category, data, doc_id=None):
     """
     Save a document under users/{user_id}/{category}/{doc_id}.
+    If doc_id is not provided, Firestore auto-generates one.
     """
     if not user_id:
         return
     try:
-        doc_ref = db.collection("users").document(user_id).collection(category).document(doc_id)
-        doc_ref.set(data)
+        col_ref = db.collection("users").document(user_id).collection(category)
+        if doc_id:
+            col_ref.document(doc_id).set(data)
+        else:
+            col_ref.add(data)
     except Exception as e:
         print(f"[FIREBASE ERROR] {e}")
 
